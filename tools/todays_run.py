@@ -18,7 +18,7 @@ def get_todays_run(day: str = "today", state: dict | None = None) -> str:
         raise ToolError(
             "No weekly plan exists in this session yet. Ask the runner for their location, their "
             "class/work schedule, and the runs they want this week, then call plan_running_week. "
-            "If they just want to run now, ask for distance and run type and call find_running_routes."
+            "If they just want to run now, ask for distance and start point and call find_running_routes."
         )
 
     forecast = get_forecast(plan["location"]["lat"], plan["location"]["lon"], plan["unit"])
@@ -82,8 +82,6 @@ def get_todays_run(day: str = "today", state: dict | None = None) -> str:
         )
         result["better_time_today"] = alt or "No free window with decent weather left today. Suggest moving it to tomorrow."
 
-    if run["type"] == "intervals":
-        result["route_hint"] = "Intervals: look for a 400m track or a flat, uninterrupted loop (call find_running_routes with run_type='intervals')."
     return json.dumps(result)
 
 
