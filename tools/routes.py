@@ -1,17 +1,14 @@
-"""find_running_routes: real routes from the runner's door, ranked with safety in mind.
+"""find_running_routes: real routes from the runner's door, fitted to the workout.
 
 1. Find parks and 400m tracks near the start (OpenStreetMap via Overpass).
 2. Route there and around them on foot (OSRM foot router) to get real distances.
 3. Measure climb (Open-Meteo elevation) so intervals land on flat ground.
-4. In NYC and Chicago, count reported outdoor violent crime along each route
-   (city open data) relative to the area average, and name the hotspots.
+4. Rank by how well each route suits the workout and hits the distance.
 """
 
 import json
 import math
-from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, timedelta
 
 import requests
 
@@ -25,35 +22,6 @@ OVERPASS_URLS = [
 OSRM_FOOT_URL = "https://routing.openstreetmap.de/routed-foot/route/v1/foot/"
 ELEVATION_URL = "https://api.open-meteo.com/v1/elevation"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
-
-# Violent crimes that happen outdoors: the ones that matter to someone running past.
-CRIME_SOURCES = {
-    "New York City": {
-        "bbox": (40.49, -74.27, 40.92, -73.68),
-        "url": "https://data.cityofnewyork.us/resource/5uac-w243.json",
-        "label": "NYPD complaints (NYC Open Data): robbery, felony assault, sex crimes on streets/parks",
-        "select": "latitude,longitude,cmplnt_fr_tm AS time",
-        "where": (
-            "within_circle(lat_lon, {lat}, {lon}, {radius}) AND cmplnt_fr_dt > '{since}' AND "
-            "ofns_desc in('ROBBERY','FELONY ASSAULT','RAPE','SEX CRIMES') AND "
-            "prem_typ_desc in('STREET','PARK/PLAYGROUND','OPEN AREAS (OPEN LOTS)','HIGHWAY/PARKWAY','BRIDGE')"
-        ),
-    },
-    "Chicago": {
-        "bbox": (41.64, -87.94, 42.03, -87.52),
-        "url": "https://data.cityofchicago.org/resource/ijzp-q8t2.json",
-        "label": "Chicago Police reports (Chicago Data Portal): robbery, assault, battery, sexual assault outdoors",
-        "select": "latitude,longitude,date AS time",
-        "where": (
-            "within_circle(location, {lat}, {lon}, {radius}) AND date > '{since}' AND "
-            "primary_type in('ROBBERY','ASSAULT','BATTERY','CRIMINAL SEXUAL ASSAULT') AND "
-            "location_description in('STREET','SIDEWALK','PARK PROPERTY','ALLEY')"
-        ),
-    },
-}
-
-CORRIDOR_M = 100  # incidents this close to the path count against a route
-
 
 def find_running_routes(
     start: str,
@@ -80,7 +48,6 @@ def find_running_routes(
     picks = _pick_candidates(candidates, origin, target_m, run_type)
 
     with ThreadPoolExecutor(max_workers=6) as pool:
-        crime_future = pool.submit(_crime_near, origin, radius + 500)
         sun_future = pool.submit(_sun_times, origin)
         routed = list(pool.map(lambda c: _route(origin, c), picks))
     routes = [r for r in routed if r]
@@ -91,36 +58,28 @@ def find_running_routes(
     routes = [r for r in routes if 2 * r["approach_m"] <= target_m * 1.05] or routes
 
     _add_elevation(routes)
-    crime, crime_source = crime_future.result()
     sunrise, sunset = sun_future.result()
     after_dark = run_hour is not None and sunrise is not None and not (sunrise <= run_hour < sunset)
 
-    hotspots = _hotspots(crime) if crime is not None else []
     for r in routes:
         _fit_distance(r, target_m, unit)
-        r["safety"] = _route_safety(r, crime, radius + 500, hotspots, run_hour) if crime is not None else None
         r["fit"] = _suitability(r, run_type)
 
-    # Best routes first: suitability, then safety, then how close to the target distance.
-    def rank(r):
-        safety = r["safety"]["vs_area_average"] if r["safety"] else 1.0
-        return -r["fit"]["score"] + 20 * min(safety, 3) + abs(r["total_m"] - target_m) / target_m * 30
-
-    routes.sort(key=rank)
+    # Best routes first: suitability, then how close to the target distance.
+    routes.sort(key=lambda r: -r["fit"]["score"] + abs(r["total_m"] - target_m) / target_m * 30)
 
     tips = []
     if after_dark:
-        tips.append(f"Running after dark (sunset {sunset:.0f}:00ish): wear lights, pick the route with the fewest incidents, stay on lit, busy paths, and tell someone your route.")
-    if crime is None:
-        tips.append("Crime data is only wired up for New York City and Chicago, so these routes are ranked on terrain and distance only. Stick to busy, well-lit paths.")
+        tips.append(
+            f"Running after dark (sunset {int(sunset)}:{round(sunset % 1 * 60):02d}): wear lights, "
+            "stay on lit, busy paths, and tell someone your route."
+        )
 
     return json.dumps({
         "start": {"name": origin["name"], "lat": round(origin["lat"], 5), "lon": round(origin["lon"], 5)},
         "target": f"{distance:g} {unit}",
         "run_type": run_type,
-        "crime_data": crime_source or "not available for this city",
         "routes": [_public(r, unit) for r in routes[:3]],
-        "hotspots": [{"lat": h["lat"], "lon": h["lon"], "incidents": h["count"]} for h in hotspots[:10]],
         "tips": tips,
     })
 
@@ -376,107 +335,6 @@ def _sample(coords: list, n: int) -> list:
     return [coords[round(i * step)] for i in range(n)]
 
 
-# --- Safety ---
-
-
-def _crime_near(origin: dict, radius: int) -> tuple[list[dict] | None, str | None]:
-    """Recent outdoor violent incidents around the start, or (None, None) if the
-    city has no open data source wired up."""
-    for city, src in CRIME_SOURCES.items():
-        s, w, n, e = src["bbox"]
-        if s <= origin["lat"] <= n and w <= origin["lon"] <= e:
-            break
-    else:
-        return None, None
-
-    since = (date.today() - timedelta(days=365)).isoformat()
-    try:
-        rows = HTTP.get(
-            src["url"],
-            params={
-                "$select": src["select"],
-                "$where": src["where"].format(lat=origin["lat"], lon=origin["lon"], radius=radius, since=since),
-                "$limit": 10000,
-            },
-            timeout=25,
-        ).json()
-        incidents = [
-            # NYC gives "19:45:00", Chicago "2026-06-01T19:45:00.000"
-            {"lat": float(r["latitude"]), "lon": float(r["longitude"]), "hour": _hour(r.get("time", "").split("T")[-1])}
-            for r in rows
-            if r.get("latitude") and r.get("longitude")
-        ]
-    except (requests.RequestException, ValueError, KeyError, TypeError):
-        return None, f"{city} crime data was unreachable, so safety isn't scored this time"
-    return incidents, f"{src['label']}, last 12 months available"
-
-
-def _hotspots(incidents: list[dict]) -> list[dict]:
-    """~200m grid cells with unusually many incidents."""
-    cells = Counter((round(i["lat"] / 0.002), round(i["lon"] / 0.0025)) for i in incidents)
-    if not cells:
-        return []
-    threshold = max(4, 3 * sum(cells.values()) / len(cells))
-    return [
-        {"lat": round(la * 0.002, 4), "lon": round(lo * 0.0025, 4), "count": n}
-        for (la, lo), n in cells.most_common()
-        if n >= threshold
-    ]
-
-
-def _route_safety(r: dict, incidents: list[dict], radius: int, hotspots: list[dict], run_hour: int | None) -> dict:
-    path = _densify(r["approach_coords"] + r["loop_coords"], 40)
-    path_km = (r["approach_m"] + r["lap_m"]) / 1000
-
-    # Grid lookup so each incident is checked against nearby path points only.
-    grid = {}
-    for lat, lon in path:
-        grid.setdefault((round(lat / 0.001), round(lon / 0.0013)), []).append((lat, lon))
-
-    def near_path(lat, lon, limit):
-        gx, gy = round(lat / 0.001), round(lon / 0.0013)
-        return any(
-            haversine_m(lat, lon, *p) <= limit
-            for dx in (-1, 0, 1)
-            for dy in (-1, 0, 1)
-            for p in grid.get((gx + dx, gy + dy), [])
-        )
-
-    hits = [i for i in incidents if near_path(i["lat"], i["lon"], CORRIDOR_M)]
-
-    # What a random path this long would expect, from the area's incident density.
-    area_km2 = math.pi * (radius / 1000) ** 2
-    expected = len(incidents) / area_km2 * path_km * (2 * CORRIDOR_M / 1000)
-    ratio = round(len(hits) / expected, 2) if expected else 0
-    level = "lower than the area average" if ratio < 0.75 else "about the area average" if ratio <= 1.33 else "higher than the area average"
-
-    passes = Counter()
-    for h in hotspots:
-        if near_path(h["lat"], h["lon"], 150):
-            street = min(r["steps"], key=lambda s: haversine_m(h["lat"], h["lon"], s["lat"], s["lon"]), default=None)
-            near = street["name"] if street and haversine_m(h["lat"], h["lon"], street["lat"], street["lon"]) < 400 else r["place"]["name"]
-            passes[near] += h["count"]
-
-    safety = {
-        "incidents_within_100m": len(hits),
-        "vs_area_average": ratio,
-        "summary": f"Reported incidents along this route are {level}.",
-        "hotspots_on_route": [{"near": n, "incidents": c} for n, c in passes.most_common(4)],
-    }
-    if run_hour is not None and hits:
-        same_time = sum(1 for i in hits if i["hour"] is not None and min(abs(i["hour"] - run_hour), 24 - abs(i["hour"] - run_hour)) <= 2)
-        safety["within_2h_of_run_time"] = same_time
-    return safety
-
-
-def _densify(coords: list, step_m: float) -> list:
-    out = []
-    for a, b in zip(coords, coords[1:]):
-        n = max(1, int(haversine_m(*a, *b) // step_m))
-        out += [(a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n) for k in range(n)]
-    return out + coords[-1:]
-
-
 # --- Presentation ---
 
 
@@ -528,7 +386,6 @@ def _public(r: dict, unit: str) -> dict:
         "terrain": r["fit"]["terrain"],
         "climb_per_lap_m": r.get("climb_m_per_lap"),
         "why": r["fit"]["why"],
-        "safety": r["safety"],
         "streets": list(dict.fromkeys(s["name"] for s in r["steps"]))[:6],
         "approach_path": [[round(a, 5), round(b, 5)] for a, b in _sample(r["approach_coords"], 30)],
         "loop_path": [[round(a, 5), round(b, 5)] for a, b in _sample(r["loop_coords"], 50)],
@@ -569,9 +426,7 @@ SCHEMA = {
             "Suggest up to 3 real running routes from a starting point: run to a nearby park or "
             "400m track, do laps, run back. Distances come from a walking router, climb from "
             "elevation data. Picks tracks or flat loops for intervals and big loops for long runs. "
-            "In New York City and Chicago it also counts reported outdoor violent crime along each "
-            "route versus the area average and names hotspot streets to avoid. Call it when the "
-            "runner asks where to run or wants a route for today's workout."
+            "Call it when the runner asks where to run or wants a route for today's workout."
         ),
         "parameters": {
             "type": "object",
@@ -580,7 +435,7 @@ SCHEMA = {
                 "distance": {"type": "number", "description": "Total run distance in `unit`, including getting there and back."},
                 "unit": {"type": "string", "enum": ["mi", "km"], "description": "Default 'mi'."},
                 "run_type": {"type": "string", "enum": ["easy", "recovery", "long", "tempo", "intervals", "race"], "description": "The workout the runner named (or today's planned run type). If they didn't name one, use 'easy'."},
-                "time_of_day": {"type": "string", "description": "Planned start time, 24-hour HH:MM. Enables after-dark warnings and time-of-day crime counts."},
+                "time_of_day": {"type": "string", "description": "Planned start time, 24-hour HH:MM. Enables after-dark warnings."},
             },
             "required": ["start", "distance"],
         },

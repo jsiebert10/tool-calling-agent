@@ -467,30 +467,10 @@
                 font-size: 0.7rem;
                 color: var(--muted);
             }
-            .safety {
-                display: inline-block;
-                font-family: var(--mono);
-                font-size: 0.68rem;
-                padding: 1px 7px;
-                border-radius: 999px;
-                margin-top: 4px;
-            }
-            .safety.low {
-                background: rgba(74, 222, 128, 0.15);
-                color: var(--easy);
-            }
-            .safety.avg {
-                background: rgba(255, 181, 71, 0.15);
-                color: var(--warn);
-            }
-            .safety.high {
-                background: rgba(255, 92, 122, 0.15);
-                color: var(--danger);
-            }
             .leaflet-container {
                 font-family: "Space Grotesk", sans-serif;
             }
-            /* Night-mode the standard OSM tiles so routes and hotspots pop. */
+            /* Night-mode the standard OSM tiles so the routes pop. */
             .map .leaflet-tile-pane {
                 filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.4);
             }
@@ -689,7 +669,7 @@
                 <div class="section-label">What it can do</div>
                 <div class="skill"><span class="ico">🗓</span><div><b>Plan your week</b><small>Fits runs around class and work, dodging rain, storms, heat and smoke.</small></div></div>
                 <div class="skill"><span class="ico">🏃</span><div><b>Today's run</b><small>"I want to do my run today": the workout, paces, and a fresh forecast.</small></div></div>
-                <div class="skill"><span class="ico">🗺</span><div><b>Routes with safety in mind</b><small>Real loops to parks and tracks. Flat ones for intervals. Reported crime hotspots in NYC &amp; Chicago.</small></div></div>
+                <div class="skill"><span class="ico">🗺</span><div><b>Routes from your door</b><small>Real loops to parks and tracks. Flat ones for intervals, big ones for long runs.</small></div></div>
                 <div class="skill"><span class="ico">🎧</span><div><b>Stride-matched music</b><small>Electronic tracks whose BPM matches your steps per minute.</small></div></div>
             </div>
 
@@ -698,13 +678,12 @@
                 <button class="chip" data-prompt="I'm in Morningside Heights, NYC. I have class Mon and Wed 10am-4pm and work Tue and Thu 9-5. This week I want an easy 4 miler, a 5 mile tempo, 6 miles of intervals and a 10 mile long run. My easy pace is about 9:30. When should I run?"><span class="step">1 · plan</span>I'm in Morningside Heights with class Mon/Wed 10–4 and work Tue/Thu 9–5. Plan an easy 4, tempo 5, intervals 6, long 10.</button>
                 <button class="chip" data-prompt="Hey, I want to do my run today. What is it and where should I go?"><span class="step">2 · today</span>Hey, I want to do my run today. What is it and where should I go?</button>
                 <button class="chip" data-prompt="Make me a playlist for that run."><span class="step">3 · music</span>Make me a playlist for that run.</button>
-                <button class="chip" data-prompt="I'm doing 5k at 5:20/km from Wicker Park, Chicago tonight at 8pm. Where's a safe flat loop, and give me drum and bass for it."><span class="step">or · one-off</span>5k at 5:20/km from Wicker Park, Chicago tonight at 8pm. Safe flat loop + drum and bass.</button>
+                <button class="chip" data-prompt="I'm doing 5k at 5:20/km from Wicker Park, Chicago tonight at 8pm. Where's a good flat loop, and give me drum and bass for it."><span class="step">or · one-off</span>5k at 5:20/km from Wicker Park, Chicago tonight at 8pm. Flat loop + drum and bass.</button>
             </div>
 
             <p class="fineprint">
-                Safety data counts reported incidents near each route. It can't guarantee
-                anything, so use your judgment. Weather: Open-Meteo · Maps: OpenStreetMap ·
-                Crime: NYC &amp; Chicago Open Data · Tempo: ReccoBeats · Previews: Deezer.
+                Weather: Open-Meteo · Maps &amp; routing: OpenStreetMap, OSRM · Tempo:
+                ReccoBeats · Previews: Deezer.
             </p>
         </aside>
 
@@ -881,14 +860,11 @@
                 const mapDiv = el("div", { class: "map" });
                 body.appendChild(mapDiv);
                 body.appendChild(
-                    el("div", { class: "legend" }, "● start   ┅ run there & back   ━ loop", data.hotspots?.length ? "   ◯ red = reported-incident hotspot (12 mo)" : ""),
+                    el("div", { class: "legend" }, "● start   ┅ run there & back   ━ loop"),
                 );
-                body.appendChild(el("div", { class: "workout-meta" }, `From ${data.start.name} · ${data.target} ${data.run_type} · crime data: ${data.crime_data}`));
+                body.appendChild(el("div", { class: "workout-meta" }, `From ${data.start.name} · ${data.target} ${data.run_type}`));
 
                 data.routes.forEach((r, i) => {
-                    const s = r.safety;
-                    const level = !s ? null : s.vs_area_average < 0.75 ? "low" : s.vs_area_average <= 1.33 ? "avg" : "high";
-                    const levelText = { low: "below area avg", avg: "about area avg", high: "above area avg" }[level];
                     body.appendChild(
                         el(
                             "div",
@@ -901,14 +877,6 @@
                                 el("div", {}, r.directions),
                                 el("div", { class: "rmeta" }, `${r.terrain}${r.climb_per_lap_m != null ? ` · ${r.climb_per_lap_m}m climb/lap` : ""} · ${r.why.join(" · ")}`),
                                 r.adjust ? el("div", { class: "rmeta" }, "↔ " + r.adjust) : null,
-                                s
-                                    ? el(
-                                          "span",
-                                          { class: "safety " + level },
-                                          `${s.incidents_within_100m} reported incidents within 100m · ${levelText}` +
-                                              (s.hotspots_on_route.length ? ` · hotspot near ${s.hotspots_on_route.map((h) => h.near).join(", ")}` : ""),
-                                      )
-                                    : null,
                             ),
                         ),
                     );
@@ -930,11 +898,6 @@
                     maxZoom: 19,
                 }).addTo(map);
                 const bounds = L.latLngBounds([[data.start.lat, data.start.lon]]);
-                for (const h of data.hotspots || []) {
-                    L.circle([h.lat, h.lon], { radius: 60 + h.incidents * 8, color: "#ff5c7a", weight: 1, fillOpacity: 0.18 })
-                        .bindTooltip(`${h.incidents} reported incidents (12 mo)`)
-                        .addTo(map);
-                }
                 data.routes.forEach((r, i) => {
                     const color = ROUTE_COLORS[i];
                     const approach = L.polyline(r.approach_path, { color, weight: 3, dashArray: "6 6", opacity: 0.9 }).addTo(map);
