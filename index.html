@@ -3,190 +3,1091 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Gemini Web Tool Calling</title>
+        <title>Cadence Running Coach</title>
+        <link
+            rel="icon"
+            href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='16' fill='%23c6ff3d'/%3E%3Crect x='9' y='11' width='3' height='10' rx='1.5' fill='%2311140a'/%3E%3Crect x='14.5' y='8' width='3' height='16' rx='1.5' fill='%2311140a'/%3E%3Crect x='20' y='12' width='3' height='8' rx='1.5' fill='%2311140a'/%3E%3C/svg%3E"
+        />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;700&display=swap"
+            rel="stylesheet"
+        />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
         <style>
+            :root {
+                --bg: #0d0e11;
+                --panel: #15171c;
+                --panel-2: #1c1f26;
+                --line: #2a2e38;
+                --text: #eceef1;
+                --muted: #969cab;
+                --accent: #c6ff3d;
+                --accent-ink: #11140a;
+                --danger: #ff5c7a;
+                --warn: #ffb547;
+                --easy: #4ade80;
+                --recovery: #94a3b8;
+                --long: #60a5fa;
+                --tempo: #f59e0b;
+                --intervals: #f43f5e;
+                --race: #a78bfa;
+                --mono: "JetBrains Mono", ui-monospace, monospace;
+            }
             * {
                 box-sizing: border-box;
                 margin: 0;
                 padding: 0;
             }
             body {
-                font-family: system-ui, sans-serif;
+                font-family: "Space Grotesk", system-ui, sans-serif;
+                background: var(--bg);
+                color: var(--text);
                 height: 100vh;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                padding: 3rem 1rem;
+                height: 100dvh;
+                display: grid;
+                grid-template-columns: 340px 1fr;
+                overflow: hidden;
             }
-            #container {
-                width: 100%;
-                max-width: 900px;
+            a {
+                color: var(--accent);
+            }
+
+            /* ---- Sidebar: what this is and how to use it ---- */
+            aside {
+                border-right: 1px solid var(--line);
+                padding: 28px 24px;
+                overflow-y: auto;
+                background:
+                    repeating-linear-gradient(90deg, transparent 0 46px, rgba(255, 255, 255, 0.025) 46px 48px),
+                    var(--panel);
+            }
+            .brand {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }
+            .brand-mark {
+                width: 42px;
+                height: 42px;
+                border-radius: 50%;
+                background: var(--accent);
+                display: grid;
+                place-items: center;
+            }
+            .brand-mark span {
+                display: block;
+                width: 4px;
+                height: 16px;
+                margin: 0 1.5px;
+                background: var(--accent-ink);
+                border-radius: 2px;
+                animation: beat 0.36s ease-in-out infinite alternate;
+            }
+            .brand-mark span:nth-child(2) {
+                animation-delay: 0.12s;
+            }
+            .brand-mark span:nth-child(3) {
+                animation-delay: 0.24s;
+            }
+            .bars {
+                display: flex;
+            }
+            @keyframes beat {
+                from {
+                    transform: scaleY(0.4);
+                }
+                to {
+                    transform: scaleY(1);
+                }
+            }
+            h1 {
+                font-size: 1.6rem;
+                letter-spacing: -0.02em;
+            }
+            .tagline {
+                color: var(--muted);
+                margin: 14px 0 22px;
+                line-height: 1.5;
+                font-size: 0.95rem;
+            }
+            .section-label {
+                font-family: var(--mono);
+                font-size: 0.7rem;
+                letter-spacing: 0.12em;
+                text-transform: uppercase;
+                color: var(--muted);
+                margin: 22px 0 10px;
+            }
+            .skill {
+                display: grid;
+                grid-template-columns: 26px 1fr;
+                gap: 10px;
+                padding: 10px 0;
+                border-bottom: 1px dashed var(--line);
+                font-size: 0.9rem;
+                line-height: 1.4;
+            }
+            .skill b {
+                display: block;
+            }
+            .skill small {
+                color: var(--muted);
+            }
+            .skill .ico {
+                font-size: 1.15rem;
+            }
+            .chips {
                 display: flex;
                 flex-direction: column;
-                border: 1px solid #e0e0e0;
+                gap: 8px;
+            }
+            .chip {
+                text-align: left;
+                background: var(--panel-2);
+                border: 1px solid var(--line);
+                color: var(--text);
+                border-radius: 10px;
+                padding: 10px 12px;
+                font: inherit;
+                font-size: 0.85rem;
+                line-height: 1.35;
+                cursor: pointer;
+                transition: border-color 0.15s;
+            }
+            .chip:hover {
+                border-color: var(--accent);
+            }
+            .chip .step {
+                font-family: var(--mono);
+                color: var(--accent);
+                font-size: 0.7rem;
+                display: block;
+                margin-bottom: 3px;
+            }
+            .fineprint {
+                margin-top: 22px;
+                color: var(--muted);
+                font-size: 0.75rem;
+                line-height: 1.5;
+            }
+
+            /* ---- Chat ---- */
+            main {
+                display: flex;
+                flex-direction: column;
+                min-width: 0;
+                min-height: 0;
+            }
+            header.bar {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 14px 28px;
+                border-bottom: 1px solid var(--line);
+                font-family: var(--mono);
+                font-size: 0.75rem;
+                color: var(--muted);
+            }
+            .ghost {
+                background: none;
+                border: 1px solid var(--line);
+                color: var(--text);
+                border-radius: 999px;
+                padding: 6px 14px;
+                font: inherit;
+                cursor: pointer;
+            }
+            .ghost:hover {
+                border-color: var(--accent);
             }
             #messages {
+                flex: 1;
                 overflow-y: auto;
-                padding: 2rem;
+                padding: 28px;
                 display: flex;
                 flex-direction: column;
-                gap: 1.5rem;
-                min-height: 450px;
-                max-height: 70vh;
+                gap: 18px;
+            }
+            .empty {
+                margin: auto;
+                text-align: center;
+                color: var(--muted);
+                max-width: 420px;
+                line-height: 1.6;
+            }
+            .empty .big {
+                font-size: 2.6rem;
+                color: var(--text);
+                font-weight: 700;
+                letter-spacing: -0.03em;
+                line-height: 1.1;
+                margin-bottom: 10px;
+            }
+            .empty .big em {
+                color: var(--accent);
+                font-style: normal;
             }
             .msg {
-                line-height: 1.5;
-                max-width: 80%;
+                max-width: min(760px, 92%);
+                line-height: 1.55;
             }
             .msg.user {
                 align-self: flex-end;
-                text-align: right;
+                background: var(--accent);
+                color: var(--accent-ink);
+                padding: 10px 16px;
+                border-radius: 16px 16px 4px 16px;
+                font-weight: 500;
             }
-            .msg .role {
-                font-size: 0.75rem;
-                text-transform: uppercase;
-                letter-spacing: 0.05em;
-                color: #999;
-                margin-bottom: 0.25rem;
+            .msg.assistant .content {
+                background: var(--panel);
+                border: 1px solid var(--line);
+                padding: 14px 18px;
+                border-radius: 4px 16px 16px 16px;
+            }
+            .msg.assistant .content p + p,
+            .msg.assistant .content ul,
+            .msg.assistant .content ol {
+                margin-top: 8px;
+            }
+            .msg.assistant .content ul,
+            .msg.assistant .content ol {
+                padding-left: 20px;
             }
             .msg.loading .content {
-                color: #999;
+                color: var(--muted);
+                font-family: var(--mono);
+                font-size: 0.85rem;
             }
+            .who {
+                font-family: var(--mono);
+                font-size: 0.68rem;
+                letter-spacing: 0.1em;
+                text-transform: uppercase;
+                color: var(--muted);
+                margin-bottom: 6px;
+            }
+
+            /* ---- Tool cards ---- */
+            .tool {
+                border: 1px solid var(--line);
+                border-left: 3px solid var(--accent);
+                background: var(--panel);
+                border-radius: 10px;
+                margin-bottom: 10px;
+                overflow: hidden;
+            }
+            .tool.error {
+                border-left-color: var(--danger);
+            }
+            .tool-head {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 10px 14px;
+                font-family: var(--mono);
+                font-size: 0.75rem;
+                color: var(--muted);
+                border-bottom: 1px solid var(--line);
+            }
+            .tool-head b {
+                color: var(--accent);
+                font-weight: 600;
+            }
+            .tool.error .tool-head b {
+                color: var(--danger);
+            }
+            .tool-body {
+                padding: 14px;
+            }
+            .tool details {
+                border-top: 1px solid var(--line);
+                font-family: var(--mono);
+                font-size: 0.72rem;
+                color: var(--muted);
+            }
+            .tool summary {
+                padding: 8px 14px;
+                cursor: pointer;
+            }
+            .tool pre {
+                padding: 0 14px 12px;
+                white-space: pre-wrap;
+                word-break: break-word;
+                max-height: 260px;
+                overflow: auto;
+            }
+            .err-text {
+                color: var(--danger);
+                font-size: 0.9rem;
+            }
+
+            /* Week grid */
+            .week {
+                display: grid;
+                grid-template-columns: repeat(7, minmax(92px, 1fr));
+                gap: 6px;
+                overflow-x: auto;
+            }
+            .day {
+                background: var(--panel-2);
+                border-radius: 8px;
+                padding: 9px;
+                font-size: 0.78rem;
+                min-height: 140px;
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+                border-top: 3px solid var(--line);
+            }
+            .day .dname {
+                font-weight: 700;
+                font-size: 0.85rem;
+            }
+            .day .ddate,
+            .day .wx {
+                color: var(--muted);
+                font-family: var(--mono);
+                font-size: 0.66rem;
+            }
+            .day .rtype {
+                font-weight: 700;
+                text-transform: uppercase;
+                font-size: 0.72rem;
+                letter-spacing: 0.06em;
+                margin-top: 4px;
+            }
+            .day .time {
+                font-family: var(--mono);
+                font-size: 0.75rem;
+            }
+            .day .warn {
+                color: var(--warn);
+                font-size: 0.68rem;
+            }
+            .day.rest {
+                opacity: 0.55;
+            }
+            .rating {
+                display: inline-block;
+                font-family: var(--mono);
+                font-size: 0.62rem;
+                padding: 1px 6px;
+                border-radius: 999px;
+                background: var(--line);
+                width: fit-content;
+            }
+            .rating.great {
+                background: rgba(198, 255, 61, 0.18);
+                color: var(--accent);
+            }
+            .rating.poor {
+                background: rgba(255, 92, 122, 0.18);
+                color: var(--danger);
+            }
+            .unsched {
+                margin-top: 10px;
+                color: var(--warn);
+                font-size: 0.8rem;
+            }
+
+            /* Workout */
+            .workout-title {
+                font-size: 1.15rem;
+                font-weight: 700;
+            }
+            .workout-meta {
+                color: var(--muted);
+                font-size: 0.82rem;
+                margin: 4px 0 12px;
+            }
+            .segments {
+                display: flex;
+                gap: 4px;
+                margin-bottom: 10px;
+            }
+            .seg {
+                border-radius: 6px;
+                padding: 8px 10px;
+                font-size: 0.75rem;
+                min-width: 70px;
+                background: var(--panel-2);
+                border-bottom: 3px solid var(--muted);
+            }
+            .seg b {
+                display: block;
+                font-size: 0.8rem;
+            }
+            .seg span {
+                font-family: var(--mono);
+                color: var(--muted);
+                font-size: 0.68rem;
+            }
+            .callout {
+                font-size: 0.8rem;
+                padding: 8px 10px;
+                border-radius: 6px;
+                background: rgba(255, 181, 71, 0.1);
+                color: var(--warn);
+                margin-top: 6px;
+            }
+
+            /* Routes */
+            .map {
+                height: 340px;
+                border-radius: 8px;
+                margin-bottom: 12px;
+                background: #111;
+            }
+            .route {
+                display: grid;
+                grid-template-columns: 14px 1fr;
+                gap: 10px;
+                padding: 10px 0;
+                border-top: 1px dashed var(--line);
+                font-size: 0.85rem;
+                line-height: 1.45;
+            }
+            .swatch {
+                width: 14px;
+                height: 14px;
+                border-radius: 4px;
+                margin-top: 3px;
+            }
+            .route .rname {
+                font-weight: 700;
+            }
+            .route .rmeta {
+                font-family: var(--mono);
+                font-size: 0.7rem;
+                color: var(--muted);
+            }
+            .safety {
+                display: inline-block;
+                font-family: var(--mono);
+                font-size: 0.68rem;
+                padding: 1px 7px;
+                border-radius: 999px;
+                margin-top: 4px;
+            }
+            .safety.low {
+                background: rgba(74, 222, 128, 0.15);
+                color: var(--easy);
+            }
+            .safety.avg {
+                background: rgba(255, 181, 71, 0.15);
+                color: var(--warn);
+            }
+            .safety.high {
+                background: rgba(255, 92, 122, 0.15);
+                color: var(--danger);
+            }
+            .leaflet-container {
+                font-family: "Space Grotesk", sans-serif;
+            }
+            /* Night-mode the standard OSM tiles so routes and hotspots pop. */
+            .map .leaflet-tile-pane {
+                filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.4);
+            }
+            .legend {
+                font-family: var(--mono);
+                font-size: 0.68rem;
+                color: var(--muted);
+                margin: -6px 0 10px;
+            }
+
+            /* Playlist */
+            .pl-head {
+                display: flex;
+                align-items: center;
+                gap: 16px;
+                margin-bottom: 12px;
+            }
+            .bpm {
+                font-size: 2.4rem;
+                font-weight: 700;
+                letter-spacing: -0.03em;
+                line-height: 1;
+                color: var(--accent);
+            }
+            .bpm small {
+                font-size: 0.8rem;
+                color: var(--muted);
+                font-weight: 400;
+                display: block;
+                letter-spacing: 0.04em;
+            }
+            .pl-meta {
+                color: var(--muted);
+                font-size: 0.8rem;
+                flex: 1;
+            }
+            .metro {
+                background: var(--accent);
+                color: var(--accent-ink);
+                border: none;
+                border-radius: 999px;
+                padding: 8px 14px;
+                font: inherit;
+                font-weight: 700;
+                cursor: pointer;
+                white-space: nowrap;
+            }
+            .metro.on {
+                animation: pulse calc(60s / var(--bpm, 160)) linear infinite;
+            }
+            @keyframes pulse {
+                0% {
+                    box-shadow: 0 0 0 0 rgba(198, 255, 61, 0.6);
+                }
+                100% {
+                    box-shadow: 0 0 0 10px rgba(198, 255, 61, 0);
+                }
+            }
+            .track {
+                display: grid;
+                grid-template-columns: 40px 1fr auto auto;
+                gap: 10px;
+                align-items: center;
+                padding: 7px 0;
+                border-top: 1px solid var(--line);
+                font-size: 0.85rem;
+            }
+            .cover {
+                width: 40px;
+                height: 40px;
+                border-radius: 6px;
+                background: var(--panel-2);
+                object-fit: cover;
+            }
+            .tt {
+                min-width: 0;
+            }
+            .tt b,
+            .tt span {
+                display: block;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            .tt span {
+                color: var(--muted);
+                font-size: 0.75rem;
+            }
+            .tbpm {
+                font-family: var(--mono);
+                font-size: 0.72rem;
+                color: var(--muted);
+                text-align: right;
+            }
+            .tbpm b {
+                color: var(--text);
+            }
+            .play {
+                width: 30px;
+                height: 30px;
+                border-radius: 50%;
+                border: 1px solid var(--line);
+                background: none;
+                color: var(--text);
+                cursor: pointer;
+                font-size: 0.7rem;
+            }
+            .play:disabled {
+                opacity: 0.3;
+                cursor: default;
+            }
+            .note {
+                color: var(--warn);
+                font-size: 0.8rem;
+                margin-top: 8px;
+            }
+
+            /* ---- Composer ---- */
             #input-area {
                 display: flex;
-                gap: 1rem;
-                padding: 1.5rem;
-                border-top: 1px solid #e0e0e0;
+                gap: 10px;
+                padding: 16px 28px 22px;
+                border-top: 1px solid var(--line);
             }
             #user-input {
                 flex: 1;
-                padding: 0.75rem 0;
-                border: none;
-                border-bottom: 1px solid #e0e0e0;
+                padding: 13px 16px;
+                border-radius: 12px;
+                border: 1px solid var(--line);
+                background: var(--panel);
+                color: var(--text);
+                font: inherit;
                 font-size: 1rem;
                 outline: none;
             }
             #user-input:focus {
-                border-bottom-color: #000;
+                border-color: var(--accent);
             }
-            button {
-                padding: 0.75rem 1.5rem;
-                background: #000;
-                color: #fff;
+            #send-btn {
+                padding: 0 22px;
+                background: var(--accent);
+                color: var(--accent-ink);
                 border: none;
-                font-size: 0.75rem;
-                text-transform: uppercase;
-                letter-spacing: 0.05em;
+                border-radius: 12px;
+                font: inherit;
+                font-weight: 700;
                 cursor: pointer;
             }
-            .tool {
-                font-family: ui-monospace, monospace;
-                font-size: 0.75rem;
-                color: #555;
-                background: #f5f5f5;
-                border-left: 3px solid #f59e0b;
-                padding: 0.5rem 0.75rem;
-                margin: 0.25rem 0 0.75rem;
-                white-space: pre-wrap;
-                word-break: break-word;
+            #send-btn:disabled {
+                opacity: 0.35;
             }
-            .tool .label {
-                text-transform: uppercase;
-                letter-spacing: 0.05em;
-                color: #b45309;
-            }
-            button:disabled {
-                opacity: 0.3;
+
+            @media (max-width: 860px) {
+                body {
+                    grid-template-columns: 1fr;
+                    grid-template-rows: auto 1fr;
+                    overflow: auto;
+                    height: auto;
+                }
+                aside {
+                    border-right: none;
+                    border-bottom: 1px solid var(--line);
+                    padding: 18px 16px;
+                }
+                .skills {
+                    display: none;
+                }
+                main {
+                    height: 100dvh;
+                }
+                #messages {
+                    padding: 16px;
+                }
+                #input-area {
+                    padding: 12px 16px 16px;
+                }
+                header.bar {
+                    padding: 10px 16px;
+                }
             }
         </style>
     </head>
     <body>
-        <div id="container">
-            <div id="messages"></div>
+        <aside>
+            <div class="brand">
+                <div class="brand-mark"><div class="bars"><span></span><span></span><span></span></div></div>
+                <h1>Cadence</h1>
+            </div>
+            <p class="tagline">
+                A running coach for people with a schedule. Tell it your week and it finds the
+                driest, safest times to run, builds the route from your door, and makes a
+                playlist that hits every footstep on the beat.
+            </p>
+
+            <div class="skills">
+                <div class="section-label">What it can do</div>
+                <div class="skill"><span class="ico">🗓</span><div><b>Plan your week</b><small>Fits runs around class and work, dodging rain, storms, heat and smoke.</small></div></div>
+                <div class="skill"><span class="ico">🏃</span><div><b>Today's run</b><small>"I want to do my run today": the workout, paces, and a fresh forecast.</small></div></div>
+                <div class="skill"><span class="ico">🗺</span><div><b>Routes with safety in mind</b><small>Real loops to parks and tracks. Flat ones for intervals. Reported crime hotspots in NYC &amp; Chicago.</small></div></div>
+                <div class="skill"><span class="ico">🎧</span><div><b>Stride-matched music</b><small>Electronic tracks whose BPM matches your steps per minute.</small></div></div>
+            </div>
+
+            <div class="section-label">Try it, in order</div>
+            <div class="chips">
+                <button class="chip" data-prompt="I'm in Morningside Heights, NYC. I have class Mon and Wed 10am-4pm and work Tue and Thu 9-5. This week I want an easy 4 miler, a 5 mile tempo, 6 miles of intervals and a 10 mile long run. My easy pace is about 9:30. When should I run?"><span class="step">1 · plan</span>I'm in Morningside Heights with class Mon/Wed 10–4 and work Tue/Thu 9–5. Plan an easy 4, tempo 5, intervals 6, long 10.</button>
+                <button class="chip" data-prompt="Hey, I want to do my run today. What is it and where should I go?"><span class="step">2 · today</span>Hey, I want to do my run today. What is it and where should I go?</button>
+                <button class="chip" data-prompt="Make me a playlist for that run."><span class="step">3 · music</span>Make me a playlist for that run.</button>
+                <button class="chip" data-prompt="I'm doing 5k at 5:20/km from Wicker Park, Chicago tonight at 8pm. Where's a safe flat loop, and give me drum and bass for it."><span class="step">or · one-off</span>5k at 5:20/km from Wicker Park, Chicago tonight at 8pm. Safe flat loop + drum and bass.</button>
+            </div>
+
+            <p class="fineprint">
+                Safety data counts reported incidents near each route. It can't guarantee
+                anything, so use your judgment. Weather: Open-Meteo · Maps: OpenStreetMap ·
+                Crime: NYC &amp; Chicago Open Data · Tempo: ReccoBeats · Previews: Deezer.
+            </p>
+        </aside>
+
+        <main>
+            <header class="bar">
+                <span id="session-label">new session</span>
+                <button class="ghost" id="new-btn">New session</button>
+            </header>
+            <div id="messages">
+                <div class="empty" id="empty">
+                    <div class="big">Run on <em>time</em>.<br />Run on <em>beat</em>.</div>
+                    Start with your weekly schedule, or tap a prompt on the left. Every tool
+                    Cadence uses shows up here as a card you can open.
+                </div>
+            </div>
             <div id="input-area">
-                <input
-                    type="text"
-                    id="user-input"
-                    placeholder="Type a message..."
-                    autocomplete="off"
-                />
+                <input type="text" id="user-input" placeholder="e.g. I want to run 5 miles from Columbia tonight at 7" autocomplete="off" />
                 <button id="send-btn">Send</button>
             </div>
-        </div>
+        </main>
+
         <script>
             const messages = document.getElementById("messages");
             const userInput = document.getElementById("user-input");
             const sendBtn = document.getElementById("send-btn");
+            const sessionLabel = document.getElementById("session-label");
+            const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
             let sessionId = null;
 
+            const ROUTE_COLORS = ["#c6ff3d", "#60a5fa", "#f59e0b"];
+            const TYPE_COLOR = (t) => `var(--${t}, var(--muted))`;
+
+            // Build DOM from a tag, attributes, and children. Strings become text
+            // nodes, so nothing from a tool result is ever parsed as HTML.
+            function el(tag, attrs = {}, ...children) {
+                const node = document.createElement(tag);
+                for (const [k, v] of Object.entries(attrs)) {
+                    if (k === "style") node.style.cssText = v;
+                    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+                    else node.setAttribute(k, v);
+                }
+                for (const c of children.flat(Infinity)) {
+                    if (c === null || c === undefined || c === false) continue;
+                    node.appendChild(typeof c === "string" || typeof c === "number" ? document.createTextNode(String(c)) : c);
+                }
+                return node;
+            }
+
             function addMessage(role, text, isLoading = false) {
-                const div = document.createElement("div");
-                div.className =
-                    "msg " +
-                    (role === "you" ? "user" : "assistant") +
-                    (isLoading ? " loading" : "");
-                div.innerHTML =
-                    '<div class="role">' +
-                    role +
-                    '</div><div class="content">' +
-                    text +
-                    "</div>";
+                document.getElementById("empty")?.remove();
+                const content = el("div", { class: "content" });
+                if (role === "you") content.textContent = text;
+                else setMarkdown(content, text);
+                const div = el(
+                    "div",
+                    { class: "msg " + (role === "you" ? "user" : "assistant") + (isLoading ? " loading" : "") },
+                    role === "you" ? null : el("div", { class: "who" }, "cadence"),
+                    content,
+                );
                 messages.appendChild(div);
                 messages.scrollTop = messages.scrollHeight;
                 return div;
             }
 
-            async function send() {
-                const text = userInput.value.trim();
-                if (!text) return;
+            function setMarkdown(node, text) {
+                node.innerHTML = DOMPurify.sanitize(marked.parse(text || ""));
+            }
+
+            // ---------- Tool cards ----------
+
+            const LABELS = {
+                plan_running_week: "🗓 plan_running_week",
+                get_todays_run: "🏃 get_todays_run",
+                find_running_routes: "🗺 find_running_routes",
+                build_run_playlist: "🎧 build_run_playlist",
+            };
+
+            function toolCard(call) {
+                let data;
+                try {
+                    data = JSON.parse(call.result);
+                } catch {
+                    data = { error: String(call.result) };
+                }
+                const body = el("div", { class: "tool-body" });
+                const card = el(
+                    "div",
+                    { class: "tool" + (data.error ? " error" : "") },
+                    el("div", { class: "tool-head" }, el("b", {}, LABELS[call.name] || call.name), data.error ? "· failed" : "· tool call"),
+                    body,
+                    el(
+                        "details",
+                        {},
+                        el("summary", {}, "raw call & result"),
+                        el("pre", {}, call.name + "(" + JSON.stringify(call.args, null, 1) + ")\n→ " + JSON.stringify(data, null, 1)),
+                    ),
+                );
+                try {
+                    if (data.error) body.appendChild(el("div", { class: "err-text" }, data.error));
+                    else if (call.name === "plan_running_week") renderWeek(body, data);
+                    else if (call.name === "get_todays_run") renderToday(body, data);
+                    else if (call.name === "find_running_routes") renderRoutes(body, data);
+                    else if (call.name === "build_run_playlist") renderPlaylist(body, data);
+                    else body.remove();
+                } catch (e) {
+                    body.textContent = "Couldn't draw this card: " + e.message;
+                }
+                return card;
+            }
+
+            function renderWeek(body, data) {
+                const grid = el("div", { class: "week" });
+                for (const d of data.week) {
+                    const r = d.run;
+                    grid.appendChild(
+                        el(
+                            "div",
+                            { class: "day" + (r ? "" : " rest"), style: r ? `border-top-color:${TYPE_COLOR(r.type)}` : "" },
+                            el("div", { class: "dname" }, d.weekday.slice(0, 3)),
+                            el("div", { class: "ddate" }, d.date.slice(5)),
+                            r
+                                ? [
+                                      el("div", { class: "rtype", style: `color:${TYPE_COLOR(r.type)}` }, `${r.type} · ${r.distance}${data.unit}`),
+                                      el("div", { class: "time" }, `${r.start}–${r.end}`),
+                                      el("span", { class: "rating " + r.rating }, r.rating),
+                                      el("div", { class: "wx" }, r.weather),
+                                      r.warnings.map((w) => el("div", { class: "warn" }, "⚠ " + w)),
+                                  ]
+                                : [el("div", { class: "rtype" }, "rest"), el("div", { class: "wx" }, d.day_conditions)],
+                        ),
+                    );
+                }
+                body.appendChild(el("div", { class: "workout-meta" }, `${data.location} · easy pace ${data.easy_pace}`));
+                body.appendChild(grid);
+                for (const u of data.unscheduled || []) body.appendChild(el("div", { class: "unsched" }, "⚠ " + u));
+            }
+
+            function renderToday(body, data) {
+                if (data.rest_day) {
+                    body.appendChild(el("div", { class: "workout-title" }, `${data.weekday}: rest day 😌`));
+                    if (data.next_run)
+                        body.appendChild(el("div", { class: "workout-meta" }, `Next: ${data.next_run.title}, ${data.next_run.weekday} at ${data.next_run.start}`));
+                    return;
+                }
+                body.appendChild(el("div", { class: "workout-title", style: `color:${TYPE_COLOR(data.type)}` }, data.workout));
+                body.appendChild(
+                    el("div", { class: "workout-meta" }, `${data.weekday} · planned ${data.planned_start} · ~${data.estimated_time} · sunset ${data.sunset} · from ${data.start_location}`),
+                );
+                const total = data.segments.reduce((a, s) => a + s.distance, 0);
+                body.appendChild(
+                    el(
+                        "div",
+                        { class: "segments" },
+                        data.segments.map((s) =>
+                            el(
+                                "div",
+                                { class: "seg", style: `flex:${s.distance / total};border-bottom-color:${/repeat/i.test(s.name) ? "var(--intervals)" : /tempo/i.test(s.name) ? "var(--tempo)" : TYPE_COLOR(data.type)}` },
+                                el("b", {}, s.name),
+                                el("span", {}, `${s.distance} ${data.unit} @ ${s.pace}`),
+                                s.detail ? el("span", { style: "display:block" }, s.detail) : null,
+                            ),
+                        ),
+                    ),
+                );
+                const f = data.forecast_at_planned_time;
+                if (f) body.appendChild(el("div", { class: "workout-meta" }, "Forecast at planned time: " + f.weather));
+                for (const w of f?.warnings || []) body.appendChild(el("div", { class: "callout" }, "⚠ " + w));
+                if (data.planned_time_status) body.appendChild(el("div", { class: "callout" }, data.planned_time_status));
+                const alt = data.better_time_today;
+                if (alt) body.appendChild(el("div", { class: "callout" }, typeof alt === "string" ? alt : `Better time today: ${alt.start}–${alt.end} (${alt.weather})`));
+            }
+
+            function renderRoutes(body, data) {
+                const mapDiv = el("div", { class: "map" });
+                body.appendChild(mapDiv);
+                body.appendChild(
+                    el("div", { class: "legend" }, "● start   ┅ run there & back   ━ loop", data.hotspots?.length ? "   ◯ red = reported-incident hotspot (12 mo)" : ""),
+                );
+                body.appendChild(el("div", { class: "workout-meta" }, `From ${data.start.name} · ${data.target} ${data.run_type} · crime data: ${data.crime_data}`));
+
+                data.routes.forEach((r, i) => {
+                    const s = r.safety;
+                    const level = !s ? null : s.vs_area_average < 0.75 ? "low" : s.vs_area_average <= 1.33 ? "avg" : "high";
+                    const levelText = { low: "below area avg", avg: "about area avg", high: "above area avg" }[level];
+                    body.appendChild(
+                        el(
+                            "div",
+                            { class: "route" },
+                            el("div", { class: "swatch", style: `background:${ROUTE_COLORS[i]}` }),
+                            el(
+                                "div",
+                                {},
+                                el("div", { class: "rname" }, `${r.name} · ${r.total}`),
+                                el("div", {}, r.directions),
+                                el("div", { class: "rmeta" }, `${r.terrain}${r.climb_per_lap_m != null ? ` · ${r.climb_per_lap_m}m climb/lap` : ""} · ${r.why.join(" · ")}`),
+                                r.adjust ? el("div", { class: "rmeta" }, "↔ " + r.adjust) : null,
+                                s
+                                    ? el(
+                                          "span",
+                                          { class: "safety " + level },
+                                          `${s.incidents_within_100m} reported incidents within 100m · ${levelText}` +
+                                              (s.hotspots_on_route.length ? ` · hotspot near ${s.hotspots_on_route.map((h) => h.near).join(", ")}` : ""),
+                                      )
+                                    : null,
+                            ),
+                        ),
+                    );
+                });
+                for (const t of data.tips || []) body.appendChild(el("div", { class: "callout" }, t));
+
+                // Leaflet needs the div in the document before it can size the map.
+                requestAnimationFrame(() => drawMap(mapDiv, data));
+            }
+
+            function drawMap(mapDiv, data) {
+                if (!window.L) {
+                    mapDiv.textContent = "Map library failed to load.";
+                    return;
+                }
+                const map = L.map(mapDiv, { scrollWheelZoom: false });
+                L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+                    maxZoom: 19,
+                }).addTo(map);
+                const bounds = L.latLngBounds([[data.start.lat, data.start.lon]]);
+                for (const h of data.hotspots || []) {
+                    L.circle([h.lat, h.lon], { radius: 60 + h.incidents * 8, color: "#ff5c7a", weight: 1, fillOpacity: 0.18 })
+                        .bindTooltip(`${h.incidents} reported incidents (12 mo)`)
+                        .addTo(map);
+                }
+                data.routes.forEach((r, i) => {
+                    const color = ROUTE_COLORS[i];
+                    const approach = L.polyline(r.approach_path, { color, weight: 3, dashArray: "6 6", opacity: 0.9 }).addTo(map);
+                    const loop = L.polyline(r.loop_path, { color, weight: 5, opacity: 0.9 }).bindTooltip(r.name).addTo(map);
+                    bounds.extend(approach.getBounds()).extend(loop.getBounds());
+                });
+                L.circleMarker([data.start.lat, data.start.lon], { radius: 8, color: "#fff", fillColor: "#c6ff3d", fillOpacity: 1, weight: 2 })
+                    .bindTooltip("Start: " + data.start.name)
+                    .addTo(map);
+                map.fitBounds(bounds, { padding: [20, 20] });
+            }
+
+            // Metronome at the playlist's BPM: one click per footstep.
+            let audioCtx = null;
+            let metroTimer = null;
+            let metroBtn = null;
+            function toggleMetronome(btn, bpm) {
+                const wasMine = metroBtn === btn;
+                if (metroTimer) {
+                    clearInterval(metroTimer);
+                    metroTimer = null;
+                    metroBtn.classList.remove("on");
+                    metroBtn.textContent = "▶ Metronome";
+                    metroBtn = null;
+                }
+                if (wasMine) return;
+                audioCtx = audioCtx || new AudioContext();
+                const click = () => {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.frequency.value = 1400;
+                    gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.05);
+                    osc.connect(gain).connect(audioCtx.destination);
+                    osc.start();
+                    osc.stop(audioCtx.currentTime + 0.05);
+                };
+                click();
+                metroTimer = setInterval(click, 60000 / bpm);
+                metroBtn = btn;
+                btn.classList.add("on");
+                btn.textContent = "■ " + bpm + " spm";
+            }
+
+            const audio = new Audio();
+            let playingBtn = null;
+            function playPreview(btn, url) {
+                if (playingBtn === btn) {
+                    audio.pause();
+                    btn.textContent = "▶";
+                    playingBtn = null;
+                    return;
+                }
+                if (playingBtn) playingBtn.textContent = "▶";
+                audio.src = url;
+                audio.play();
+                btn.textContent = "❚❚";
+                playingBtn = btn;
+                audio.onended = () => {
+                    btn.textContent = "▶";
+                    playingBtn = null;
+                };
+            }
+
+            function renderPlaylist(body, data) {
+                const metro = el("button", { class: "metro", style: `--bpm:${data.target_bpm}` }, "▶ Metronome");
+                metro.addEventListener("click", () => toggleMetronome(metro, data.target_bpm));
+                body.appendChild(
+                    el(
+                        "div",
+                        { class: "pl-head" },
+                        el("div", { class: "bpm" }, String(data.target_bpm), el("small", {}, "BPM = STEPS/MIN")),
+                        el("div", { class: "pl-meta" }, `${data.playlist_length} of music for a ${Math.round(data.run_minutes)} min run · cadence ${data.cadence_source} · ${data.genres_searched.join(", ")}`),
+                        metro,
+                    ),
+                );
+                for (const t of data.tracks) {
+                    const cover = el("img", { class: "cover", alt: "" });
+                    const play = el("button", { class: "play", disabled: "", title: "30s preview" }, "▶");
+                    body.appendChild(
+                        el(
+                            "div",
+                            { class: "track" },
+                            cover,
+                            el("div", { class: "tt" }, el("b", {}, t.title), el("span", {}, `${t.artist} · ${t.genre}`)),
+                            el("div", { class: "tbpm" }, el("b", {}, t.match.startsWith("2") ? `${t.bpm}×2 BPM` : `${t.bpm} BPM`), el("div", {}, t.length), t.spotify ? el("a", { href: t.spotify, target: "_blank", rel: "noopener" }, "spotify") : null),
+                            play,
+                        ),
+                    );
+                    if (t.isrc)
+                        fetch("/preview?isrc=" + encodeURIComponent(t.isrc))
+                            .then((r) => r.json())
+                            .then((p) => {
+                                if (p.cover) cover.src = p.cover;
+                                if (p.preview) {
+                                    play.disabled = false;
+                                    play.addEventListener("click", () => playPreview(play, p.preview));
+                                }
+                            })
+                            .catch(() => {});
+                }
+                if (data.note) body.appendChild(el("div", { class: "note" }, data.note));
+            }
+
+            // ---------- Chat loop ----------
+
+            const THINKING = ["lacing up…", "checking the forecast…", "finding the beat…", "scouting routes…"];
+
+            async function send(textOverride) {
+                const text = (textOverride ?? userInput.value).trim();
+                if (!text || sendBtn.disabled) return;
 
                 userInput.value = "";
                 sendBtn.disabled = true;
                 addMessage("you", text);
-                const loading = addMessage("assistant", "Thinking...", true);
+                const loading = addMessage("assistant", THINKING[0], true);
+                let tick = 0;
+                const ticker = setInterval(() => {
+                    loading.querySelector(".content").textContent = THINKING[++tick % THINKING.length];
+                }, 1800);
 
                 try {
                     const res = await fetch("/chat", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            message: text,
-                            session_id: sessionId,
-                        }),
+                        body: JSON.stringify({ message: text, session_id: sessionId, timezone }),
                     });
                     const data = await res.json();
                     sessionId = data.session_id;
+                    sessionLabel.textContent = "session " + sessionId.slice(0, 8);
 
                     // Show each tool the harness ran, above the assistant's answer
                     for (const call of data.tool_calls || []) {
-                        const div = document.createElement("div");
-                        div.className = "tool";
-                        const label = document.createElement("span");
-                        label.className = "label";
-                        label.textContent = "tool call  ";
-                        div.appendChild(label);
-                        div.appendChild(
-                            document.createTextNode(
-                                call.name + "(" + JSON.stringify(call.args) + ")\n→ " + call.result,
-                            ),
-                        );
-                        messages.insertBefore(div, loading);
+                        loading.insertBefore(toolCard(call), loading.querySelector(".content"));
                     }
-                    loading.querySelector(".content").textContent =
-                        data.response;
-                    loading.classList.remove("loading");
+                    setMarkdown(loading.querySelector(".content"), data.response);
                 } catch (e) {
-                    loading.querySelector(".content").textContent =
-                        "Error: " + e.message;
-                    loading.classList.remove("loading");
+                    loading.querySelector(".content").textContent = "Error: " + e.message;
                 }
+                clearInterval(ticker);
+                loading.classList.remove("loading");
                 sendBtn.disabled = false;
                 userInput.focus();
             }
 
-            sendBtn.addEventListener("click", send);
-            userInput.addEventListener("keydown", function (e) {
+            sendBtn.addEventListener("click", () => send());
+            userInput.addEventListener("keydown", (e) => {
                 if (e.key === "Enter") send();
+            });
+            document.querySelectorAll(".chip").forEach((chip) => chip.addEventListener("click", () => send(chip.dataset.prompt)));
+            document.getElementById("new-btn").addEventListener("click", async () => {
+                if (sessionId) await fetch("/clear?session_id=" + encodeURIComponent(sessionId), { method: "POST" });
+                location.reload();
             });
             userInput.focus();
         </script>

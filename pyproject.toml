@@ -1,7 +1,7 @@
 [project]
-name = "gemini-web-tool-calling"
+name = "cadence-running-agent"
 version = "0.1.0"
-description = "qwen-tool-calling behind a web server: FastAPI + LiteLLM + Gemini, with tool calls shown in the UI"
+description = "Cadence: a running coach agent (FastAPI + LiteLLM + Gemini) that plans runs around your schedule and the weather, finds safe routes, and builds BPM-matched playlists"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.109.0",
@@ -9,4 +9,5 @@ dependencies = [
     "litellm>=1.50",
     "google-cloud-aiplatform>=1.40.0",
     "requests>=2.31",
+    "tzdata>=2026.5",
 ]
