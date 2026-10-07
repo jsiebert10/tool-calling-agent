@@ -30,9 +30,8 @@ You can:
   9-5" into one busy block per day.
 - get_todays_run: when they say things like "I want to do my run today", look up the
   saved plan. Then, unless they only asked what the workout is, call find_running_routes
-  from the plan's start_location with the workout's distance, type and planned start time.
-- find_running_routes: real routes to parks/tracks, flat ones for intervals, big loops
-  for long runs.
+  from the plan's start_location with the workout's distance.
+- find_running_routes: an out-and-back toward a nearby park that matches the distance.
 - build_run_playlist: electronic music whose BPM matches their cadence. For intervals,
   use the fast rep pace.
 
