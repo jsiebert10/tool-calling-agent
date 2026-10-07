@@ -10,7 +10,7 @@ and `/chat` response shape (`response`, `session_id`, `tool_calls`). Gemini via 
 
 ## Sample queries
 
-Run in order, in one session — each builds on the last:
+Run in order, in one session: each builds on the last.
 
 1. **Plan the week:** *"I'm in Morningside Heights, NYC. I have class Mon and Wed
    10am-4pm and work Tue and Thu 9-5. This week I want an easy 4 miler, a 5 mile tempo, 6
@@ -27,19 +27,19 @@ Run in order, in one session — each builds on the last:
 | --- | --- | --- |
 | `plan_running_week` ([tools/week_planner.py](tools/week_planner.py)) | Scores every free slot in the next 7 days around class/work, weighing rain, heat, wind, darkness, air quality, and avoiding back-to-back hard days. Saves the plan to the session. | Open-Meteo, Nominatim |
 | `get_todays_run` ([tools/todays_run.py](tools/todays_run.py)) | Reads the saved plan for a given day, breaks the workout into paced segments, and re-checks the forecast. | Open-Meteo |
-| `find_running_routes` ([tools/routes.py](tools/routes.py)) | An out-and-back toward a nearby park on real walking paths, turning around at halfway. | OpenStreetMap Overpass, OSRM |
+| `find_running_routes` ([tools/routes.py](tools/routes.py)) | A route on real walking paths for the requested distance: out-and-back or one way, toward a park or landmark the runner names or one nearby, or ending at a specific finish. | OpenStreetMap, OSRM, Valhalla |
 | `build_run_playlist` ([tools/playlist.py](tools/playlist.py)) | Matches cadence to BPM (one step per beat, or two on half-time tracks), fills the run's duration with real tempo data. | ReccoBeats, Deezer (previews) |
 
 Tool errors raise `ToolError` with an instruction for the model, so a bad argument or a
-flaky API never crashes the chat — it just gets relayed back for a retry or a fix.
+flaky API never crashes the chat. It just gets relayed back for a retry or a fix.
 
 ## Sessions & frontend
 
 `sessions[session_id]` holds the message history; `session_state[session_id]` holds the
 saved week plan. Separate sessions (or **New session**) get separate plans and history.
 
-[index.html](index.html) renders each tool call as a card — week grid, route map, genre
-picker, playlist with a metronome — each with a **raw call & result** drawer showing the
+[index.html](index.html) renders each tool call as a card (week grid, route map, genre
+picker, playlist with a metronome), each with a **raw call & result** drawer showing the
 exact args and result.
 
 ## Run locally
@@ -55,9 +55,10 @@ needs the **Vertex AI User** role.
 
 ## Limits
 
-- Routes only reach parks OpenStreetMap knows about; cadence is estimated from pace
-  unless you give your watch's number.
-- Sessions live in memory — a Cloud Run restart clears them.
-- Previews/cover art come from Deezer, then iTunes as a fallback. Some niche tracks
+- Routes depend on what OpenStreetMap has mapped nearby for parks and landmarks, and a
+  named finish must be reachable on foot within 5% of the run's distance.
+- Cadence is estimated from pace unless you give your watch's number.
+- Sessions live in memory, so a Cloud Run restart clears them.
+- Previews and cover art come from Deezer, then iTunes as a fallback. Some niche tracks
   (ReccoBeats mirrors Spotify's catalog) aren't licensed for preview on either, so the
-  play button stays disabled — the BPM match is still accurate, there's just no clip.
+  play button stays disabled. The BPM match is still accurate; there's just no clip.
