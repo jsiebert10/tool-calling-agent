@@ -1,8 +1,10 @@
 """plan_running_week: fit the runner's runs into their free time and the best weather.
 
 1. Geocode the location and pull a 7-day hourly forecast + air quality (Open-Meteo).
-2. For every day, find every free start time (outside class/work, with a buffer)
-   and score it: rain, storms, heat, cold, wind, darkness, bad air.
+2. For every day, find every free start time (outside class/work, with a buffer).
+   Storms, heavy rain and unhealthy air rule a slot out entirely (is_unsafe). Among
+   what's left, prefer the runner's preferred time of day, then the most comfortable
+   feels-like temperature (temp_discomfort).
 3. Try every assignment of runs to days and keep the best total, penalizing
    hard workouts on back-to-back days.
 The plan is saved in the session so get_todays_run can read it later.
@@ -51,6 +53,18 @@ def plan_running_week(
         if not 0 < float(r.get("distance") or 0) <= 50:
             raise ToolError(f"Each run needs a distance between 0 and 50 {unit}. Got {r.get('distance')!r} for a {r['type']} run.")
 
+    # Ask about time-of-day preference once per session before the first real plan,
+    # unless the runner already volunteered one (preferred_time would then be set).
+    if state is not None and not state.get("asked_time_preference"):
+        state["asked_time_preference"] = True
+        if preferred_time == "any":
+            raise ToolError(
+                "Don't call plan_running_week yet. First ask the runner, in one short message "
+                "together with anything else you still need, whether they have a preferred time "
+                "of day to run: morning, midday, evening, or no preference. Respond with that "
+                "question as plain text and wait for their answer before calling this tool."
+            )
+
     easy_s = parse_pace(easy_pace or ("10:00" if unit == "mi" else "6:15"), unit)
     day_start, day_end = _minutes(earliest), _minutes(latest)
     busy = _busy_by_weekday(busy_blocks or [])
@@ -59,14 +73,17 @@ def plan_running_week(
 
     workouts = [build_workout(r["type"], float(r["distance"]), unit, easy_s) for r in runs]
 
-    # best[run][day] = best slot that day for that run, or None if it doesn't fit
-    best = [
+    # best[run][day] = best safe slot that day for that run, or None if it doesn't fit.
+    # hazards[run][day] = reasons free time existed that day but was all unsafe weather.
+    slots = [
         [
             best_slot(forecast, day, w["est_minutes"], busy, day_start, day_end, preferred_time)
             for day in range(len(forecast["days"]))
         ]
         for w in workouts
     ]
+    best = [[slot for slot, _ in row] for row in slots]
+    hazards = [[hz for _, hz in row] for row in slots]
 
     plan_days = _assign(workouts, best, forecast)
 
@@ -79,11 +96,19 @@ def plan_running_week(
         days.append(entry)
     for i, d in enumerate(plan_days):
         if d is None:
-            unscheduled.append(
-                f"{workouts[i]['title']} ({fmt_minutes(workouts[i]['est_minutes'])}) didn't fit: no free "
-                f"window that long between {earliest} and {latest} on any open day. Ask the runner "
-                "to free up time, shorten it, or widen earliest/latest."
-            )
+            hazard_reasons = sorted({r for day_hz in hazards[i] for r in day_hz})
+            if hazard_reasons:
+                unscheduled.append(
+                    f"{workouts[i]['title']} ({fmt_minutes(workouts[i]['est_minutes'])}) has no safe window "
+                    f"this week: {', '.join(hazard_reasons)}. Tell the runner the forecast is unsafe; they "
+                    "can wait it out or choose to run anyway and accept the risk."
+                )
+            else:
+                unscheduled.append(
+                    f"{workouts[i]['title']} ({fmt_minutes(workouts[i]['est_minutes'])}) didn't fit: no free "
+                    f"window that long between {earliest} and {latest} on any open day. Ask the runner "
+                    "to free up time, shorten it, or widen earliest/latest."
+                )
 
     if state is not None:
         state["plan"] = {
@@ -113,7 +138,6 @@ def plan_running_week(
                     "start": d["run"]["start"],
                     "end": d["run"]["end"],
                     "weather": d["run"]["weather"],
-                    "rating": d["run"]["rating"],
                     "warnings": d["run"]["warnings"],
                 },
             }
@@ -256,69 +280,80 @@ def get_forecast(lat: float, lon: float, unit: str) -> dict:
     }
 
 
-def score_window(hours: list[dict], deg: str) -> tuple[int, list[str], str]:
-    """Score the hours a run covers from 0-100 and say why points were lost."""
-    feels = max(h["feels"] for h in hours)
-    coldest = min(h["feels"] for h in hours)
+def is_unsafe(hours: list[dict]) -> list[str]:
+    """Hard blockers: never schedule a run through these, no matter how good everything
+    else looks. Storms, heavy rain and unhealthy air aren't a matter of taste."""
+    reasons = []
+    if any(h["code"] >= 95 for h in hours):
+        reasons.append("thunderstorms forecast")
     rain_pct = max(h["rain_pct"] for h in hours)
     rain_mm = max(h["rain_mm"] for h in hours)
+    if rain_mm >= 2.5 or rain_pct >= 70:
+        reasons.append(f"heavy rain likely ({rain_pct}%)")
+    aqis = [h["aqi"] for h in hours if h["aqi"] is not None]
+    if aqis and max(aqis) > 150:
+        reasons.append(f"unhealthy air (AQI {max(aqis)})")
+    return reasons
+
+
+# A feels-like temperature in this range is comfortable for most runners; outside it,
+# "discomfort" grows with distance from the nearest edge. Always in °F internally.
+COMFORT_LOW_F, COMFORT_HIGH_F = 45, 65
+
+
+def temp_discomfort(hours: list[dict]) -> tuple[float, float]:
+    """How far the average feels-like temperature sits outside the comfortable
+    range. 0 means right in the sweet spot; higher is further from it, hot or cold."""
+    feels_avg = sum(h["feels"] for h in hours) / len(hours)
+    return max(0.0, COMFORT_LOW_F - feels_avg, feels_avg - COMFORT_HIGH_F), feels_avg
+
+
+def describe_window(hours: list[dict], deg: str) -> tuple[str, list[str]]:
+    """Human-readable summary and advisories for a window already cleared by
+    is_unsafe(). These are surfaced to the runner but don't affect which slot is picked."""
+    temp = round(sum(h["temp"] for h in hours) / len(hours))
+    feels_avg = sum(h["feels"] for h in hours) / len(hours)
+    feels_local = round(feels_avg if deg == "°F" else (feels_avg - 32) * 5 / 9)
+    rain_pct = max(h["rain_pct"] for h in hours)
     wind = max(h["wind"] for h in hours)
     uv = max(h["uv"] for h in hours)
     aqis = [h["aqi"] for h in hours if h["aqi"] is not None]
     aqi = max(aqis) if aqis else None
 
-    penalty, warnings = 0, []
-    if any(h["code"] >= 95 for h in hours):
-        penalty += 60
-        warnings.append("thunderstorms forecast")
-    if rain_mm >= 2.5 or rain_pct >= 70:
-        penalty += 40
-        warnings.append(f"heavy rain likely ({rain_pct}%)")
-    elif rain_pct >= 40:
-        penalty += 15
+    warnings = []
+    if rain_pct >= 40:
         warnings.append(f"{rain_pct}% chance of rain")
-    if feels >= 90:
-        penalty += 45
-        warnings.append(f"dangerous heat (feels like {round(feels)}°F)")
-    elif feels >= 80:
-        penalty += round((feels - 80) * 2)
-        warnings.append(f"hot (feels like {round(feels)}°F)")
-    if coldest <= 10:
-        penalty += 35
-        warnings.append(f"severe cold (feels like {round(coldest)}°F)")
-    elif coldest <= 25:
-        penalty += round(25 - coldest)
-        warnings.append(f"cold (feels like {round(coldest)}°F)")
     if wind >= 22:
-        penalty += 12
         warnings.append(f"windy ({round(wind)} mph)")
     if any(not h["is_day"] for h in hours):
-        penalty += 12
         warnings.append("dark: wear lights/reflective gear, stick to lit busy routes")
-    if aqi is not None and aqi > 150:
-        penalty += 40
-        warnings.append(f"unhealthy air (AQI {aqi})")
-    elif aqi is not None and aqi > 100:
-        penalty += 15
+    if aqi is not None and aqi > 100:
         warnings.append(f"air unhealthy for sensitive groups (AQI {aqi})")
     if uv >= 8:
-        penalty += 5
         warnings.append(f"very high UV ({round(uv)}): sunscreen")
 
-    temp = round(sum(h["temp"] for h in hours) / len(hours))
-    feels_avg = sum(h["feels"] for h in hours) / len(hours)
-    feels_local = round(feels_avg if deg == "°F" else (feels_avg - 32) * 5 / 9)
     summary = f"{temp}{deg} (feels {feels_local}{deg}), {rain_pct}% rain, wind {round(wind)} mph"
     if aqi is not None:
         summary += f", AQI {aqi}"
-    return max(0, 100 - penalty), warnings, summary
+    return summary, warnings
 
 
-def best_slot(forecast, day_index, minutes, busy, day_start, day_end, preferred_time="any") -> dict | None:
-    """The best-scoring free start time on one day for a run of `minutes`."""
+def best_slot(
+    forecast, day_index, minutes, busy, day_start, day_end, preferred_time="any"
+) -> tuple[dict | None, list[str]]:
+    """The best safe start time on one day for a run of `minutes`: a slot in
+    `preferred_time` (morning/midday/evening) if one is safe, and among those (or
+    among all safe slots if there's no preference, or none match it) the one whose
+    feels-like temperature is closest to comfortable.
+
+    Returns (slot, hazards). `hazards` lists reasons free time existed that day but
+    every bit of it was blocked by unsafe weather (storms, heavy rain, bad air).
+    """
     day = forecast["days"][day_index]
     blocks = busy.get(day["weekday"].lower(), [])
-    best = None
+    best: dict | None = None
+    best_key = (2, float("inf"))  # worse than any real (preference_miss, discomfort) key
+    hazards: set[str] = set()
     for start in range(day_start, day_end - minutes + 1, 30):
         end = start + minutes
         if day["date"] == forecast["today"] and start < forecast["now_minutes"] + 20:
@@ -326,19 +361,24 @@ def best_slot(forecast, day_index, minutes, busy, day_start, day_end, preferred_
         if any(start < b_end + BUFFER_MIN and end > b_start - BUFFER_MIN for b_start, b_end in blocks):
             continue
         hours = day["hours"][start // 60 : min(24, (end + 59) // 60)]
-        score, warnings, summary = score_window(hours, forecast["deg"])
-        if preferred_time != "any" and _period(start) != preferred_time:
-            score -= 8
-        if best is None or score > best["score"]:
+        unsafe = is_unsafe(hours)
+        if unsafe:
+            hazards.update(unsafe)
+            continue
+        discomfort, _ = temp_discomfort(hours)
+        matches_preference = preferred_time == "any" or _period(start) == preferred_time
+        key = (0 if matches_preference else 1, discomfort)
+        if key < best_key:
+            summary, warnings = describe_window(hours, forecast["deg"])
+            best_key = key
             best = {
                 "start": _clock(start),
                 "end": _clock(end),
-                "score": score,
-                "rating": "great" if score >= 85 else "good" if score >= 65 else "ok" if score >= 45 else "poor",
+                "discomfort": round(discomfort, 1),
                 "weather": summary,
                 "warnings": warnings,
             }
-    return best
+    return best, sorted(hazards)
 
 
 def _assign(workouts, best, forecast) -> list[int | None]:
@@ -357,7 +397,7 @@ def _assign(workouts, best, forecast) -> list[int | None]:
             if d is None:
                 total -= 1000
             else:
-                total += best[i][d]["score"] + (6 if workouts[i]["type"] == "long" and d in weekend else 0)
+                total += -best[i][d]["discomfort"] + (6 if workouts[i]["type"] == "long" and d in weekend else 0)
         hard_days = sorted(d for i, d in enumerate(days) if d is not None and hard[i])
         return total - 20 * sum(1 for a, b in zip(hard_days, hard_days[1:]) if b - a == 1)
 

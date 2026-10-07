@@ -9,7 +9,14 @@ import json
 from datetime import date, timedelta
 
 from tools.common import ToolError
-from tools.week_planner import WEEKDAYS, best_slot, get_forecast, score_window
+from tools.week_planner import (
+    WEEKDAYS,
+    best_slot,
+    describe_window,
+    get_forecast,
+    is_unsafe,
+    temp_discomfort,
+)
 
 
 def get_todays_run(day: str = "today", state: dict | None = None) -> str:
@@ -18,10 +25,12 @@ def get_todays_run(day: str = "today", state: dict | None = None) -> str:
         raise ToolError(
             "No weekly plan exists in this session yet. Ask the runner for their location, their "
             "class/work schedule, and the runs they want this week, then call plan_running_week. "
-            "If they just want to run now, ask for distance and run type and call find_running_routes."
+            "If they just want to run now, ask for distance and start point and call find_running_routes."
         )
 
-    forecast = get_forecast(plan["location"]["lat"], plan["location"]["lon"], plan["unit"])
+    forecast = get_forecast(
+        plan["location"]["lat"], plan["location"]["lon"], plan["unit"]
+    )
     target = _resolve_day(day, date.fromisoformat(forecast["today"]))
     days = {d["date"]: d for d in plan["days"]}
     entry = days.get(target)
@@ -33,18 +42,22 @@ def get_todays_run(day: str = "today", state: dict | None = None) -> str:
 
     if not entry["run"]:
         upcoming = [d for d in plan["days"] if d["date"] > target and d["run"]]
-        return json.dumps({
-            "date": target,
-            "weekday": entry["weekday"],
-            "rest_day": True,
-            "message": "Rest day on the plan. Easy walking or mobility is fine.",
-            "next_run": {
-                "date": upcoming[0]["date"],
-                "weekday": upcoming[0]["weekday"],
-                "title": upcoming[0]["run"]["title"],
-                "start": upcoming[0]["run"]["start"],
-            } if upcoming else None,
-        })
+        return json.dumps(
+            {
+                "date": target,
+                "weekday": entry["weekday"],
+                "rest_day": True,
+                "message": "Rest day on the plan. Easy walking or mobility is fine.",
+                "next_run": {
+                    "date": upcoming[0]["date"],
+                    "weekday": upcoming[0]["weekday"],
+                    "title": upcoming[0]["run"]["title"],
+                    "start": upcoming[0]["run"]["start"],
+                }
+                if upcoming
+                else None,
+            }
+        )
 
     run = entry["run"]
     day_index = next(i for i, d in enumerate(forecast["days"]) if d["date"] == target)
@@ -68,22 +81,50 @@ def get_todays_run(day: str = "today", state: dict | None = None) -> str:
     }
 
     if target == forecast["today"] and start < forecast["now_minutes"]:
-        result["planned_time_status"] = "The planned start time has already passed today."
+        result["planned_time_status"] = (
+            "The planned start time has already passed today."
+        )
     else:
         hours = fc_day["hours"][start // 60 : min(24, (end + 59) // 60)]
-        score, warnings, summary = score_window(hours, forecast["deg"])
-        result["forecast_at_planned_time"] = {"weather": summary, "warnings": warnings, "score": score}
-        result["forecast_changed"] = score < run["score"] - 10
+        unsafe = is_unsafe(hours)
+        if unsafe:
+            result["forecast_at_planned_time"] = {"weather": None, "warnings": unsafe}
+            result["forecast_changed"] = True
+        else:
+            discomfort, _ = temp_discomfort(hours)
+            summary, warnings = describe_window(hours, forecast["deg"])
+            result["forecast_at_planned_time"] = {
+                "weather": summary,
+                "warnings": warnings,
+            }
+            # 8°F further outside the comfort band than when planned counts as "got worse"
+            result["forecast_changed"] = discomfort > run.get("discomfort", 0) + 8
 
     # Suggest a better time if the planned one passed or got worse.
     if result.get("forecast_changed") or "planned_time_status" in result:
-        alt = best_slot(
-            forecast, day_index, run["est_minutes"], plan["busy"], *plan["window"], plan.get("preferred_time", "any")
+        alt, alt_hazards = best_slot(
+            forecast,
+            day_index,
+            run["est_minutes"],
+            plan["busy"],
+            *plan["window"],
+            plan.get("preferred_time", "any"),
         )
-        result["better_time_today"] = alt or "No free window with decent weather left today. Suggest moving it to tomorrow."
+        if alt:
+            result["better_time_today"] = alt
+        elif alt_hazards:
+            result["better_time_today"] = (
+                f"No safe window left today: {', '.join(alt_hazards)}."
+            )
+        else:
+            result["better_time_today"] = (
+                "No free window with decent weather left today. Suggest moving it to tomorrow."
+            )
 
     if run["type"] == "intervals":
-        result["route_hint"] = "Intervals: look for a 400m track or a flat, uninterrupted loop (call find_running_routes with run_type='intervals')."
+        result["route_hint"] = (
+            "Intervals: look for a 400m track or a flat, uninterrupted loop (call find_running_routes with run_type='intervals')."
+        )
     return json.dumps(result)
 
 
@@ -99,7 +140,9 @@ def _resolve_day(day: str, today: date) -> str:
     try:
         return date.fromisoformat(text).isoformat()
     except ValueError:
-        raise ToolError(f"Couldn't read the day '{day}'. Use 'today', 'tomorrow', a weekday name, or YYYY-MM-DD.")
+        raise ToolError(
+            f"Couldn't read the day '{day}'. Use 'today', 'tomorrow', a weekday name, or YYYY-MM-DD."
+        )
 
 
 def _mins(clock: str) -> int:
