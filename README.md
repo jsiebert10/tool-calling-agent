@@ -4,8 +4,8 @@ Cadence is a web chat agent for runners with a busy schedule. You give it your w
 (classes, work, the runs you want to do). It fits each run into the time you actually
 have, picking the hours with the best weather. When it's time to go, you say *"hey, I
 want to do my run today"*. It pulls up the workout, maps a real route from your door
-(flat for intervals, and steering away from reported crime hotspots), then builds an
-electronic playlist whose BPM matches your stride.
+(flat for intervals, and steering away from reported crime hotspots), then builds a
+playlist whose BPM matches your stride.
 
 Built on the class `gemini-web-tool-calling` starter: same harness loop, session store
 and `/chat` response shape (`response`, `session_id`, `tool_calls` with
@@ -25,10 +25,11 @@ Run these in order in one session (the second and third build on the first):
    map of up to 3 routes, with reported incidents along each one compared with the
    area average.
 3. **Music:** *"Make me a playlist for that run."*
-   You get tracks at your cadence's BPM, with 30-second previews and a metronome.
+   You pick a genre from the ones that fit your cadence, then get tracks at your cadence's
+   BPM, with 30-second previews and a metronome.
 
 A one-off that needs no plan: *"I'm doing 5k at 5:20/km from Wicker Park, Chicago tonight at
-8pm. Where's a safe flat loop, and give me drum and bass for it."*
+8pm. Where's a safe flat loop, and make me a playlist for it."*
 
 ## Tools
 
@@ -39,7 +40,7 @@ Each tool lives in its own file under [tools/](tools/).
 | `plan_running_week` ([week_planner.py](tools/week_planner.py)) | Scores every free 30-minute start time in the next 7 days, skipping class/work plus a 30-minute buffer. Scoring covers rain, storms, heat, cold, wind, darkness, UV and air quality. Then it searches every run→day assignment for the best week, penalizing hard workouts on back-to-back days. Saves the plan to the session. | Open-Meteo forecast + air quality, Nominatim geocoding |
 | `get_todays_run` ([todays_run.py](tools/todays_run.py)) | Reads the saved plan for today/tomorrow/a weekday. Breaks the workout into segments with target paces (e.g. warm-up, 6 x 800m, cool-down). Re-checks the forecast and suggests a better free time if the weather got worse or the slot passed. | Open-Meteo |
 | `find_running_routes` ([routes.py](tools/routes.py)) | Finds parks and 400m tracks near the start and walks real routes there and around them. Fits laps (or a turnaround) to the target distance and measures climb. Ranks routes for the workout: tracks/flat loops for intervals, big loops for long runs. In NYC and Chicago it counts reported outdoor violent crime within 100m of each route, compares that with the area average, and names hotspot streets. | OpenStreetMap Overpass, OSRM foot router, Open-Meteo elevation, NYC Open Data (NYPD complaints), Chicago Data Portal |
-| `build_run_playlist` ([playlist.py](tools/playlist.py)) | Estimates cadence (steps/min) from pace, or uses the runner's own. Picks electronic genres whose tempo sits there (house → techno → hard techno → hardstyle → drum & bass). Pulls real per-track tempo data and fills the run's duration. Half-time tracks count as 2 steps per beat. Energy builds through the playlist. | ReccoBeats (track tempo/energy), Deezer previews in the UI |
+| `build_run_playlist` ([playlist.py](tools/playlist.py)) | Estimates cadence (steps/min) from pace, or uses the runner's own. Genres ([genres.py](tools/genres.py)) fit one step per beat (drum & bass, hard techno, hardstyle, melodic EDM) or two steps per beat on half-time tracks (reggaeton, pop, lo-fi, downtempo). When several fit, the runner picks one from a list with example artists. House, techno and trance (120-142 BPM) fit no cadence between 3:30 and 9:00/km, so they're left out. Pulls real per-track tempo data and fills the run's duration. Tracks closest to the target BPM are picked first and listed first. | ReccoBeats (track tempo), Deezer previews in the UI |
 
 Error handling: tools raise `ToolError` with an instruction for the model (e.g. *"No
 weekly plan exists in this session yet. Ask the runner for…"*). `run_tool` turns every
@@ -56,8 +57,8 @@ never sees or sends it. Separate sessions (or the **New session** button) get se
 ## Frontend
 
 [index.html](index.html) renders each tool call as a card: a week grid, a workout bar, a
-Leaflet route map with incident hotspots, and a playlist with Deezer previews and a
-metronome at the target BPM. Every card has a **raw call & result** drawer that shows the
+Leaflet route map with incident hotspots, a genre picker, and a playlist with Deezer
+previews and a metronome at the target BPM. Every card has a **raw call & result** drawer that shows the
 exact args and result.
 
 ## Run locally
