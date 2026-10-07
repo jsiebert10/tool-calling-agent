@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from tools import TOOLS, run_tool
+from tools.common import plain
 from tools.routes import ASK_START
 
 # --- Config ---
@@ -34,14 +35,20 @@ You can:
 - get_todays_run: when they say things like "I want to do my run today", look up the
   saved plan. Then, unless they only asked what the workout is, get them a route for
   the workout's distance (see find_running_routes).
-- find_running_routes: an out-and-back toward a nearby park that matches the distance.
+- find_running_routes: a route that matches the distance, out-and-back or one way.
   The runner must tell you where this run starts (a neighborhood, address, landmark,
   or cross streets, with the city). If they haven't said it for this run, ask "Where
   are you starting from?" and wait; don't call the tool yet. Never fill in the start
   yourself, not even from the week plan's location; you may offer it as a suggestion
   ("Starting from <the place they gave> again?"). If they name where they want to run
-  ("toward Central Park"), pass it as `toward`. Describe the route the tool returned,
-  not one of your own.
+  ("toward Central Park"), pass it as `toward`. If they want to end at a place ("finish
+  at Columbus Circle"), pass it as `finish`. If they say one way / point to point / not
+  coming back, pass trip "one_way" (with or without a finish); if they want to go to the
+  finish and come back, pass trip "out_and_back". The distance is the run they're doing that day: if
+  they didn't say it, get it from get_todays_run or ask. If the tool says a finish is
+  not plausible, tell them why with its numbers and offer its suggestion; don't offer
+  to change their run's distance to fit the finish. Describe the
+  route the tool returned, not one of your own.
 - build_run_playlist: music whose BPM matches their cadence. For intervals, use the fast
   rep pace. Pass a genre only if the runner named one. If it returns genre_options, ask
   in one short line which genre they want (the card lists them), then call it again.
@@ -121,9 +128,6 @@ def run_agent(messages: list[dict], state: dict) -> tuple[str, list[dict]]:
 
 # Words that don't show the runner named this particular place.
 GENERIC_PLACE_WORDS = {
-    "new",
-    "york",
-    "nyc",
     "city",
     "the",
     "and",
@@ -140,7 +144,7 @@ GENERIC_PLACE_WORDS = {
 
 def _place_words(text: str) -> list[str]:
     """Lowercase words, with "West 119th" and "W 119" both reduced to "119"."""
-    text = re.sub(r"\b(?:west|east|north|south|w|e|n|s)\s+(?=\d)", "", text.lower())
+    text = re.sub(r"\b(?:west|east|north|south|w|e|n|s)\s+(?=\d)", "", plain(text))
     return [
         re.sub(r"^(\d+)(?:st|nd|rd|th)$", r"\1", w)
         for w in re.findall(r"[a-z0-9]+", text)

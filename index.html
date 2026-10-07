@@ -842,7 +842,7 @@
                 const mapDiv = el("div", { class: "map" });
                 body.appendChild(mapDiv);
                 body.appendChild(
-                    el("div", { class: "legend" }, "● start   ━ run out, turn around, run back   ◆ turnaround"),
+                    el("div", { class: "legend" }, data.routes[0]?.one_way ? "● start   ━ run to the finish   ◆ finish" : "● start   ━ run out, turn around, run back   ◆ turnaround"),
                 );
                 body.appendChild(el("div", { class: "workout-meta" }, `From ${data.start.name} · ${data.target}`));
 
@@ -880,7 +880,7 @@
                     const color = ROUTE_COLORS[i];
                     const line = L.polyline(r.path, { color, weight: 5, opacity: 0.9 }).bindTooltip(r.name).addTo(map);
                     L.circleMarker(r.path[r.path.length - 1], { radius: 6, color, fillColor: color, fillOpacity: 1 })
-                        .bindTooltip("Turnaround")
+                        .bindTooltip(r.one_way ? "Finish" : "Turnaround")
                         .addTo(map);
                     bounds.extend(line.getBounds());
                 });
