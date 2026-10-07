@@ -1,5 +1,7 @@
+import difflib
 import json
 import os
+import re
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +15,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from tools import TOOLS, run_tool
+from tools.routes import ASK_START
 
 # --- Config ---
 
@@ -29,9 +32,16 @@ You can:
   preference"), call the tool and don't ask about time of day again. Expand "Mon-Fri
   9-5" into one busy block per day.
 - get_todays_run: when they say things like "I want to do my run today", look up the
-  saved plan. Then, unless they only asked what the workout is, call find_running_routes
-  from the plan's start_location with the workout's distance.
+  saved plan. Then, unless they only asked what the workout is, get them a route for
+  the workout's distance (see find_running_routes).
 - find_running_routes: an out-and-back toward a nearby park that matches the distance.
+  The runner must tell you where this run starts (a neighborhood, address, landmark,
+  or cross streets, with the city). If they haven't said it for this run, ask "Where
+  are you starting from?" and wait; don't call the tool yet. Never fill in the start
+  yourself, not even from the week plan's location; you may offer it as a suggestion
+  ("Starting from <the place they gave> again?"). If they name where they want to run
+  ("toward Central Park"), pass it as `toward`. Describe the route the tool returned,
+  not one of your own.
 - build_run_playlist: music whose BPM matches their cadence. For intervals, use the fast
   rep pace. Pass a genre only if the runner named one. If it returns genre_options, ask
   in one short line which genre they want (the card lists them), then call it again.
@@ -83,7 +93,16 @@ def run_agent(messages: list[dict], state: dict) -> tuple[str, list[dict]]:
         for call in reply.tool_calls:
             try:
                 args = json.loads(call.function.arguments or "{}")
-                result = run_tool(call.function.name, args, state)
+                if call.function.name == "find_running_routes" and not _runner_said(
+                    args.get("start"), messages
+                ):
+                    result = json.dumps(
+                        {
+                            "error": f"The runner never said where this run starts. {ASK_START}"
+                        }
+                    )
+                else:
+                    result = run_tool(call.function.name, args, state)
             except json.JSONDecodeError as e:
                 args, result = (
                     {},
@@ -98,6 +117,62 @@ def run_agent(messages: list[dict], state: dict) -> tuple[str, list[dict]]:
             messages += [{"role": "tool", "tool_call_id": call.id, "content": result}]
 
     return "Sorry, I hit my tool-call limit before finishing.", tool_calls
+
+
+# Words that don't show the runner named this particular place.
+GENERIC_PLACE_WORDS = {
+    "new",
+    "york",
+    "nyc",
+    "city",
+    "the",
+    "and",
+    "park",
+    "ave",
+    "avenue",
+    "street",
+    "road",
+    "blvd",
+    "boulevard",
+    "university",
+}
+
+
+def _place_words(text: str) -> list[str]:
+    """Lowercase words, with "West 119th" and "W 119" both reduced to "119"."""
+    text = re.sub(r"\b(?:west|east|north|south|w|e|n|s)\s+(?=\d)", "", text.lower())
+    return [
+        re.sub(r"^(\d+)(?:st|nd|rd|th)$", r"\1", w)
+        for w in re.findall(r"[a-z0-9]+", text)
+    ]
+
+
+def _runner_said(place: str | None, messages: list[dict]) -> bool:
+    """Whether the runner typed this place: every distinctive word of its name, or its initials ("MSG").
+
+    Only the part before the first comma counts (models add the city), and
+    typos count ("asmterdam" is Amsterdam). Models fill in a start the runner
+    never gave, even when told to ask, or swap in a nearby place when the
+    runner's doesn't geocode. This catches both.
+    """
+    said = set(
+        _place_words(
+            " ".join(
+                m["content"]
+                for m in messages
+                if m.get("role") == "user" and isinstance(m.get("content"), str)
+            )
+        )
+    )
+    name = _place_words(str(place or "").split(",")[0])
+    if len(name) >= 2 and "".join(w[0] for w in name) in said:
+        return True
+    words = [
+        w for w in name if (len(w) >= 3 or w.isdigit()) and w not in GENERIC_PLACE_WORDS
+    ]
+    return bool(words) and all(
+        w in said or difflib.get_close_matches(w, said, n=1, cutoff=0.8) for w in words
+    )
 
 
 # --- Session Store ---
