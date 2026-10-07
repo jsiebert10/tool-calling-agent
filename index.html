@@ -213,25 +213,6 @@
                 flex-direction: column;
                 gap: 18px;
             }
-            .empty {
-                margin: auto;
-                text-align: center;
-                color: var(--muted);
-                max-width: 420px;
-                line-height: 1.6;
-            }
-            .empty .big {
-                font-size: 2.6rem;
-                color: var(--text);
-                font-weight: 700;
-                letter-spacing: -0.03em;
-                line-height: 1.1;
-                margin-bottom: 10px;
-            }
-            .empty .big em {
-                color: var(--accent);
-                font-style: normal;
-            }
             .msg {
                 max-width: min(760px, 92%);
                 line-height: 1.55;
@@ -512,6 +493,9 @@
                     box-shadow: 0 0 0 10px rgba(198, 255, 61, 0);
                 }
             }
+            .track.unplayable {
+                opacity: 0.5;
+            }
             .track {
                 display: grid;
                 grid-template-columns: 40px 1fr auto auto;
@@ -661,7 +645,7 @@
                 <button class="chip" data-prompt="I'm in Morningside Heights, NYC. I have class Mon and Wed 10am-4pm and work Tue and Thu 9-5. This week I want an easy 4 miler, a 5 mile tempo, 6 miles of intervals and a 10 mile long run. My easy pace is about 9:30. When should I run?"><span class="step">1 · plan</span>I'm in Morningside Heights with class Mon/Wed 10–4 and work Tue/Thu 9–5. Plan an easy 4, tempo 5, intervals 6, long 10.</button>
                 <button class="chip" data-prompt="Hey, I want to do my run today. What is it and where should I go?"><span class="step">2 · today</span>Hey, I want to do my run today. What is it and where should I go?</button>
                 <button class="chip" data-prompt="Make me a playlist for that run."><span class="step">3 · music</span>Make me a playlist for that run.</button>
-                <button class="chip" data-prompt="I'm doing a 5k at 5:20/km from Columbia University, starting at 4:30pm right after class. Where's a good flat loop, and give me drum and bass for it."><span class="step">or · one-off</span>5k at 5:20/km from Columbia, 4:30pm after class. Flat loop + drum and bass.</button>
+                <button class="chip" data-prompt="I'm doing a 5k at 5:20/km from Columbia University, starting at 4:30pm right after class. Where's a good flat loop, and build me a playlist for it."><span class="step">or · one-off</span>5k at 5:20/km from Columbia, 4:30pm after class. Flat loop + a playlist.</button>
             </div>
 
             <p class="fineprint">
@@ -675,13 +659,7 @@
                 <span id="session-label">new session</span>
                 <button class="ghost" id="new-btn">New session</button>
             </header>
-            <div id="messages">
-                <div class="empty" id="empty">
-                    <div class="big">Run on <em>time</em>.<br />Run on <em>beat</em>.</div>
-                    Start with your weekly schedule, or tap a prompt on the left. Every tool
-                    Cadence uses shows up here as a card you can open.
-                </div>
-            </div>
+            <div id="messages"></div>
             <div id="input-area">
                 <input type="text" id="user-input" placeholder="e.g. I want to run 5 miles from Columbia tonight at 7" autocomplete="off" />
                 <button id="send-btn">Send</button>
@@ -716,7 +694,6 @@
             }
 
             function addMessage(role, text, isLoading = false) {
-                document.getElementById("empty")?.remove();
                 const content = el("div", { class: "content" });
                 if (role === "you") content.textContent = text;
                 else setMarkdown(content, text);
@@ -970,30 +947,36 @@
                         metro,
                     ),
                 );
+                const trackList = el("div", { class: "track-list" });
+                body.appendChild(trackList);
                 for (const t of data.tracks) {
                     const cover = el("img", { class: "cover", alt: "" });
                     const play = el("button", { class: "play", disabled: "", title: "30s preview" }, "▶");
-                    body.appendChild(
-                        el(
-                            "div",
-                            { class: "track" },
-                            cover,
-                            el("div", { class: "tt" }, el("b", {}, t.title), el("span", {}, t.artist)),
-                            el("div", { class: "tbpm" }, el("div", {}, t.length), t.spotify ? el("a", { href: t.spotify, target: "_blank", rel: "noopener" }, "spotify") : null),
-                            play,
-                        ),
+                    const row = el(
+                        "div",
+                        { class: "track" },
+                        cover,
+                        el("div", { class: "tt" }, el("b", {}, t.title), el("span", {}, t.artist)),
+                        el("div", { class: "tbpm" }, el("div", {}, t.length), t.spotify ? el("a", { href: t.spotify, target: "_blank", rel: "noopener" }, "spotify") : null),
+                        play,
                     );
-                    if (t.isrc)
-                        fetch("/preview?isrc=" + encodeURIComponent(t.isrc))
-                            .then((r) => r.json())
-                            .then((p) => {
-                                if (p.cover) cover.src = p.cover;
-                                if (p.preview) {
-                                    play.disabled = false;
-                                    play.addEventListener("click", () => playPreview(play, p.preview));
-                                }
-                            })
-                            .catch(() => {});
+                    trackList.appendChild(row);
+                    fetch("/preview?" + new URLSearchParams({ isrc: t.isrc || "", artist: t.artist, title: t.title }))
+                        .then((r) => r.json())
+                        .then((p) => {
+                            if (p.cover) cover.src = p.cover;
+                            if (p.preview) {
+                                play.disabled = false;
+                                play.addEventListener("click", () => playPreview(play, p.preview));
+                            } else {
+                                row.classList.add("unplayable");
+                                trackList.appendChild(row); // no preview found: move it to the end
+                            }
+                        })
+                        .catch(() => {
+                            row.classList.add("unplayable");
+                            trackList.appendChild(row);
+                        });
                 }
                 if (data.note) body.appendChild(el("div", { class: "note" }, data.note));
             }
@@ -1048,6 +1031,14 @@
                 if (sessionId) await fetch("/clear?session_id=" + encodeURIComponent(sessionId), { method: "POST" });
                 location.reload();
             });
+            addMessage(
+                "assistant",
+                "**Run on time. Run on beat.**\n\n" +
+                    "I'm Cadence, your running coach. Give me your weekly schedule — classes, work, and the runs " +
+                    "you want — and I'll fit them around the forecast. Already got a plan? Just say you're ready " +
+                    "to run and I'll pull up today's workout, a route, and a playlist to match your stride.\n\n" +
+                    "Tap a prompt on the left to try it, or start typing below.",
+            );
             userInput.focus();
         </script>
     </body>

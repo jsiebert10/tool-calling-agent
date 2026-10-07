@@ -58,3 +58,6 @@ needs the **Vertex AI User** role.
 - Routes only reach parks OpenStreetMap knows about; cadence is estimated from pace
   unless you give your watch's number.
 - Sessions live in memory — a Cloud Run restart clears them.
+- Previews/cover art come from Deezer, then iTunes as a fallback. Some niche tracks
+  (ReccoBeats mirrors Spotify's catalog) aren't licensed for preview on either, so the
+  play button stays disabled — the BPM match is still accurate, there's just no clip.
