@@ -100,8 +100,10 @@ def run_agent(messages: list[dict], state: dict) -> tuple[str, list[dict]]:
         for call in reply.tool_calls:
             try:
                 args = json.loads(call.function.arguments or "{}")
-                if call.function.name == "find_running_routes" and not _runner_said(
-                    args.get("start"), messages
+                if (
+                    call.function.name == "find_running_routes"
+                    and not _runner_said(args.get("start"), messages)
+                    and not _route_already_given(messages)
                 ):
                     result = json.dumps(
                         {
@@ -179,6 +181,32 @@ def _runner_said(place: str | None, messages: list[dict]) -> bool:
     )
 
 
+def _route_already_given(messages: list[dict]) -> bool:
+    """Whether find_running_routes already succeeded earlier this session.
+
+    Once the runner has established a real start, the model sometimes re-calls
+    the tool with that same place reworded for the geocoder (a landmark's cross
+    streets instead of its name, say) — it shares no words with what the runner
+    typed, but it isn't a fabrication. _runner_said can't see that; this lets a
+    session that already passed the check once stay unblocked.
+    """
+    ids = {
+        call.get("id")
+        for m in messages
+        if m.get("role") == "assistant"
+        for call in m.get("tool_calls") or []
+        if call.get("function", {}).get("name") == "find_running_routes"
+    }
+    for m in messages:
+        if m.get("role") == "tool" and m.get("tool_call_id") in ids:
+            try:
+                if "error" not in json.loads(m.get("content") or "{}"):
+                    return True
+            except json.JSONDecodeError:
+                continue
+    return False
+
+
 # --- Session Store ---
 
 # session_id -> list of messages. In-memory, single process.
@@ -247,19 +275,61 @@ def clear(session_id: str | None = None):
 
 
 @app.get("/preview")
-def preview(isrc: str):
-    """30-second preview + cover art from Deezer for a playlist track (UI only).
-    Deezer's API has no CORS headers, so the page asks us instead."""
-    try:
-        track = requests.get(
-            f"https://api.deezer.com/track/isrc:{isrc}", timeout=8
-        ).json()
-    except (requests.RequestException, ValueError):
-        return {"preview": None, "cover": None}
-    return {
-        "preview": track.get("preview") or None,
-        "cover": (track.get("album") or {}).get("cover_small"),
-    }
+def preview(isrc: str | None = None, artist: str | None = None, title: str | None = None):
+    """30-second preview + cover art for a playlist track (UI only), from Deezer or
+    iTunes (both have no CORS headers, so the page asks us instead). Tries the exact
+    ISRC first; ReccoBeats and Deezer often disagree on which release an ISRC
+    belongs to (or that release has no preview licensed), so falls back to a Deezer
+    text search, then an iTunes search — niche genres like drum and bass sometimes
+    sit on one service's catalog and not the other's."""
+    track = None
+    if isrc:
+        try:
+            hit = requests.get(f"https://api.deezer.com/track/isrc:{isrc}", timeout=8).json()
+            if hit.get("preview"):
+                track = hit
+        except (requests.RequestException, ValueError):
+            pass
+    if not track and artist and title:
+        try:
+            results = requests.get(
+                "https://api.deezer.com/search",
+                params={"q": f"{artist} {title}"},
+                timeout=8,
+            ).json()
+            hits = [h for h in results.get("data") or [] if h.get("preview")]
+            # Prefer an exact artist match over a cover, tribute, or remix by someone else.
+            track = next(
+                (h for h in hits if h.get("artist", {}).get("name", "").lower() == artist.lower()),
+                hits[0] if hits else None,
+            )
+        except (requests.RequestException, ValueError):
+            pass
+    if track:
+        return {
+            "preview": track.get("preview"),
+            "cover": (track.get("album") or {}).get("cover_small"),
+        }
+    if artist and title:
+        try:
+            results = requests.get(
+                "https://itunes.apple.com/search",
+                params={"term": f"{artist} {title}", "entity": "song", "limit": 10},
+                timeout=8,
+            ).json()
+            hit = next(
+                (
+                    h
+                    for h in results.get("results") or []
+                    if h.get("previewUrl") and h.get("artistName", "").lower() == artist.lower()
+                ),
+                None,
+            )
+            if hit:
+                return {"preview": hit["previewUrl"], "cover": hit.get("artworkUrl100")}
+        except (requests.RequestException, ValueError):
+            pass
+    return {"preview": None, "cover": None}
 
 
 def _system_prompt(tz_name: str | None) -> str:
