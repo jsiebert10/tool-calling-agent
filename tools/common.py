@@ -2,6 +2,8 @@
 
 import math
 import re
+import time
+import unicodedata
 
 import requests
 
@@ -14,6 +16,7 @@ M_PER_UNIT = {"mi": 1609.344, "km": 1000.0}
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 OPEN_METEO_GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
+PHOTON_SEARCH_URL = "https://photon.komoot.io/api/"
 
 
 class ToolError(Exception):
@@ -25,34 +28,29 @@ class ToolError(Exception):
 
 
 def geocode(place: str, near: dict | None = None) -> dict:
-    """Turn a neighborhood, address, landmark, or cross streets into {name, lat, lon, rank, type}.
+    """Place name -> {name, lat, lon, rank, type, kind}, picking the best name match from Nominatim and Photon.
 
-    `rank` is Nominatim's place_rank, how specific the match is: 4 country,
-    8 state, ~10-16 city, ~19 neighborhood, 30 a building, landmark, or corner.
-    None when the city-only fallback answered. `type` is the OSM type, e.g. "park".
-    `near` ({lat, lon}) limits the search to ~20 km around that point, so
-    "Central Park" means the one near the runner.
+    `rank`: 4 country ... 30 building/corner. `near`: search ~50 km around it, closest match wins.
     """
-    params = {"q": place, "format": "json", "limit": 1}
-    if near:
-        lat, lon = near["lat"], near["lon"]
-        params |= {"viewbox": f"{lon - 0.2},{lat + 0.2},{lon + 0.2},{lat - 0.2}", "bounded": 1}
-    try:
-        hits = HTTP.get(NOMINATIM_URL, params=params, timeout=10).json()
-        if hits:
-            return {
-                "name": hits[0]["display_name"].split(",")[0] + _city_suffix(hits[0]),
-                "lat": float(hits[0]["lat"]),
-                "lon": float(hits[0]["lon"]),
-                "rank": hits[0].get("place_rank"),
-                "type": hits[0].get("type"),
-            }
-    except (requests.RequestException, ValueError):
-        pass  # Nominatim is rate limited; fall back below
-
-    corner = _cross_streets(place)
-    if corner:
-        return corner
+    if CROSS_STREETS.match(place):  # a corner beats a match on just one of the streets
+        corner = _cross_streets(place)
+        if corner:
+            return corner
+    candidates = _nominatim_search(place, near) + _photon_search(place, near)
+    if candidates:
+        best = max(_name_match(place, c) for c in candidates)
+        if best[1] == 0:
+            return candidates[0]  # an address or nickname ("The Met"): trust Nominatim
+        if best[1] < 0.5:  # only part of the name matches: a different place
+            raise ToolError(
+                f"Couldn't find '{place}' on the map; the closest name was '{candidates[0]['name']}', which isn't it. "
+                "Ask the runner for another name for it (it may go by a local name), a nearby landmark, "
+                "or cross streets with the city. Don't substitute one yourself."
+            )
+        tied = [c for c in candidates if _name_match(place, c) == best]
+        if near:
+            return min(tied, key=lambda c: haversine_m(near["lat"], near["lon"], c["lat"], c["lon"]))
+        return tied[0]  # Nominatim's ranking first
 
     not_found = ToolError(
         f"Couldn't find '{place}' on the map. Ask the runner for a more specific place "
@@ -68,7 +66,87 @@ def geocode(place: str, near: dict | None = None) -> dict:
     if not hits.get("results"):
         raise not_found
     hit = hits["results"][0]
-    return {"name": hit["name"], "lat": hit["latitude"], "lon": hit["longitude"], "rank": None, "type": "city"}
+    return {"name": hit["name"], "lat": hit["latitude"], "lon": hit["longitude"], "rank": None, "type": "city", "kind": "place"}
+
+
+def plain(text: str) -> str:
+    """Lowercase, no accents or apostrophes: "Joe's Café" -> "joes cafe"."""
+    text = unicodedata.normalize("NFKD", text.lower().replace("'", "").replace("’", ""))
+    return "".join(c for c in text if not unicodedata.combining(c))
+
+
+# Spelled-out words -> short form, so "Ave" matches "Avenue" and "St" matches "Street" or "Saint". "and" is dropped ("&").
+SHORT = {"avenue": "ave", "street": "st", "saint": "st", "road": "rd", "boulevard": "blvd", "drive": "dr",
+         "place": "pl", "lane": "ln", "parkway": "pkwy", "square": "sq", "mount": "mt", "fort": "ft",
+         "west": "w", "east": "e", "north": "n", "south": "s", "and": "&"}
+
+
+def _words(text: str) -> list[str]:
+    return [SHORT.get(w, w) for w in re.findall(r"[a-z0-9]+", plain(text)) if w != "and"]
+
+
+def _name_match(query: str, candidate: dict) -> tuple[float, float]:
+    """(score, share of asked-for words in the name). +1 per matching word, -0.1 per extra; initials count ("MSG")."""
+    want = set(_words(query.split(",")[0]))
+    name = _words(candidate["label"])
+    if len(name) >= 2 and "".join(w[0] for w in name) in want:
+        return float(len(want)), 1.0
+    hit = len(want & set(name))
+    return hit - 0.1 * len(set(name) - want), hit / max(len(want), 1)
+
+
+def _label(display_name: str) -> str:
+    """The place's own name from a Nominatim address: "350, 5th Avenue, ..." -> "350 5th Avenue"."""
+    parts = [p.strip() for p in display_name.split(",")]
+    return " ".join(parts[:2]) if parts[0].isdigit() and len(parts) > 1 else parts[0]
+
+
+def _nominatim_search(place: str, near: dict | None) -> list:
+    params = {"q": place, "format": "json", "limit": 10}
+    if near:
+        lat, lon = near["lat"], near["lon"]
+        params |= {"viewbox": f"{lon - 0.5},{lat + 0.5},{lon + 0.5},{lat - 0.5}", "bounded": 1}
+    for attempt in range(2):
+        try:
+            resp = HTTP.get(NOMINATIM_URL, params=params, timeout=10)
+            if resp.status_code == 429 and attempt == 0:
+                time.sleep(1.5)  # Nominatim allows ~1 request a second
+                continue
+            return [{
+                "label": _label(h["display_name"]),
+                "name": h["display_name"].split(",")[0] + _city_suffix(h),
+                "lat": float(h["lat"]), "lon": float(h["lon"]),
+                "rank": h.get("place_rank"), "type": h.get("type"), "kind": h.get("class"),
+            } for h in resp.json()]
+        except (requests.RequestException, ValueError, KeyError):
+            return []
+    return []
+
+
+# Photon has no place_rank; these stand in for it.
+PHOTON_RANK = {"country": 4, "state": 8, "city": 16, "town": 16, "village": 18, "suburb": 20,
+               "quarter": 20, "neighbourhood": 20, "borough": 18, "district": 18}
+
+
+def _photon_search(place: str, near: dict | None) -> list:
+    """Photon's matches: a second opinion that also lists every branch of a chain."""
+    params = {"q": place, "limit": 10}
+    if near:
+        params |= {"lat": near["lat"], "lon": near["lon"]}
+    try:
+        features = HTTP.get(PHOTON_SEARCH_URL, params=params, timeout=10).json()["features"]
+    except (requests.RequestException, ValueError, KeyError):
+        return []
+    out = []
+    for f in features:
+        props, (lon, lat) = f["properties"], f["geometry"]["coordinates"]
+        if not props.get("name") or (near and haversine_m(near["lat"], near["lon"], lat, lon) > 50_000):
+            continue
+        where = props.get("city") or props.get("county") or props.get("state")
+        rank = PHOTON_RANK.get(props.get("osm_value"), 30) if props.get("osm_key") == "place" else 30
+        out.append({"label": props["name"], "name": props["name"] + (f", {where}" if where else ""), "lat": lat, "lon": lon,
+                    "rank": rank, "type": props.get("osm_value"), "kind": props.get("osm_key")})
+    return out
 
 
 # "Amsterdam Ave & W 119th St, New York", "119th and Amsterdam, NYC"
@@ -79,7 +157,7 @@ STREET_WORDS = {"ave", "avenue", "st", "street", "rd", "road", "blvd", "boulevar
 
 
 def _cross_streets(place: str) -> dict | None:
-    """Where two streets cross. Nominatim can't find corners, so ask OpenStreetMap directly."""
+    """Where two streets cross (Nominatim can't find corners)."""
     match = CROSS_STREETS.match(place)
     if not match:
         return None
@@ -98,7 +176,7 @@ def _cross_streets(place: str) -> dict | None:
     if not nodes:
         return None
     return {"name": f"{a} & {b}, {city}", "lat": nodes[0]["lat"], "lon": nodes[0]["lon"],
-            "rank": 30, "type": "intersection"}
+            "rank": 30, "type": "intersection", "kind": "highway"}
 
 
 def _street_pattern(street: str) -> str:
@@ -120,7 +198,7 @@ _OVERPASS_CACHE: dict = {}
 
 
 def overpass(query: str) -> list | None:
-    """Overpass results, or None if every mirror is down (they all 504 under load at once)."""
+    """Overpass results, or None if every mirror is down."""
     if query not in _OVERPASS_CACHE:
         for url in OVERPASS_URLS:
             try:
