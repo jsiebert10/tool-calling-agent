@@ -8,18 +8,23 @@ of the right distance from your door, and builds a playlist whose BPM matches yo
 Built on the class `gemini-web-tool-calling` starter: same harness loop, session store,
 and `/chat` response shape (`response`, `session_id`, `tool_calls`). Gemini via LiteLLM.
 
+
 ## Sample queries
 
 Run in order, in one session: each builds on the last.
 
-1. **Plan the week:** *"I'm in Morningside Heights, NYC. I have class Mon and Wed
-   10am-4pm and work Tue and Thu 9-5. This week I want an easy 4 miler, a 5 mile tempo, 6
-   miles of intervals and a 10 mile long run. My easy pace is about 9:30. When should I
-   run?"* → a 7-day grid with a time slot per run, rated against the forecast.
-2. **Run today:** *"Hey, I want to do my run today. What is it and where should I go?"*
-   → today's workout broken into paced segments, plus a map of an out-and-back route.
-3. **Music:** *"Make me a playlist for that run."* → pick a genre that fits your cadence,
-   get tracks at your target BPM with previews and a metronome.
+1. **Plan the week:** *"I'm in Morningside Heights, NYC. I have class Mon and Wed 10am-4pm
+   and work Tue and Thu 9-5. This week I want an easy 4 miler, a 5 mile tempo, 6 miles of
+   intervals and a 10 mile long run. My easy pace is about 9:30 and I prefer mornings. When should I run?"*
+   You get a 7-day grid with a time slot for each run, rated against the forecast.
+   It avoids putting hard days back-to-back.
+2. **Next run:** *"What's my next run, and give me a route for it starting from 116th and Broadway."*
+   This shows your next workout with segments and paces and re-checks the forecast. Then a
+   map of an out-and-back route toward a park or landmark nearby.
+3. **Music:** *"Make me a playlist for that run."*
+   You pick a genre from the ones that fit your cadence, then get tracks at your cadence's
+   BPM, with 30-second previews and a metronome.
+
 
 ## Tools
 
