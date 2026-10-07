@@ -9,7 +9,7 @@ import math
 
 import requests
 
-from tools.common import HTTP, M_PER_UNIT, ToolError, geocode, haversine_m, overpass
+from tools.common import HTTP, M_PER_UNIT, ToolError, geocode, haversine_m, overpass, street_at
 
 PHOTON_URL = "https://photon.komoot.io/reverse"
 OSRM_FOOT_URL = "https://routing.openstreetmap.de/routed-foot/route/v1/foot/"
@@ -25,36 +25,45 @@ def find_running_routes(
     unit: str = "mi",
     toward: str | None = None,
     finish: str | None = None,
-    there_and_back: bool = False,
+    trip: str | None = None,
 ) -> str:
     if unit not in M_PER_UNIT:
         raise ToolError("unit must be 'mi' or 'km'.")
     target_m = float(distance) * M_PER_UNIT[unit]
     if not 800 <= target_m <= 50_000:
         raise ToolError(f"{distance} {unit} is outside what I can route (0.5-30 mi). Check the distance and unit.")
+    trip = trip or ("one_way" if finish else "out_and_back")
+    if trip not in ("one_way", "out_and_back"):
+        raise ToolError("trip must be 'one_way' or 'out_and_back'.")
+    one_way = trip == "one_way"
 
     origin = _start_point(start)
     if finish:
-        there_and_back = str(there_and_back).lower() in ("true", "1", "yes")  # models send "false" as text
-        result = _to_finish(origin, finish, there_and_back, target_m, distance, unit)
+        result = _to_finish(origin, finish, not one_way, target_m, distance, unit)
         if result:
             return result
 
-    half_m = target_m / 2
-    route = _route(origin, half_m, toward)
+    leg_m = target_m if one_way else target_m / 2
+    route = _route(origin, leg_m, toward)
     if not route:
         raise ToolError(
-            f"Couldn't find a {distance:g} {unit} out-and-back from {origin['name']} that stays on land. "
+            f"Couldn't find a {distance:g} {unit} {trip.replace('_', ' ')} route from {origin['name']} that stays on land. "
             "Tell the runner and suggest a shorter distance or a different start."
         )
     name, way, path, out_m = route
     per = M_PER_UNIT[unit]
+    if one_way:
+        end = street_at(*path[-1]) if way != "to" else None  # "to" ends at the place itself
+        finish_at = f", finishing on {end}" if end else " and finish there" if way == "to" else ""
+        return _result(origin, distance, unit, {
+            "name": f"One way {way} {name}",
+            "directions": f"Run {out_m / per:.2f} {unit} {way} {name}{finish_at}.",
+            "total": f"{out_m / per:.1f} {unit}", "path": path, "one_way": True,
+        })
     return _result(origin, distance, unit, {
         "name": f"Out-and-back {way} {name}",
         "directions": f"Run {out_m / per:.2f} {unit} {way} {name}, turn around, and run back the same way.",
-        "total": f"{2 * out_m / per:.1f} {unit}",
-        "path": path,
-        "one_way": False,
+        "total": f"{2 * out_m / per:.1f} {unit}", "path": path, "one_way": False,
     })
 
 
@@ -137,13 +146,16 @@ TOLERANCE = 0.05  # every route is within 5% of the run's distance
 COMPASS = ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"]
 
 
-def _route(origin: dict, half_m: float, toward: str | None) -> tuple[str, str, list, float] | None:
-    """(name, way, path out, meters out). Tries the named place, then parks, landmarks, compass directions."""
-    want_m = half_m / DETOUR
+def _route(origin: dict, leg_m: float, toward: str | None) -> tuple[str, str, list, float] | None:
+    """(name, way, path, meters) for a leg of `leg_m` (the whole run one way, half of it out and back).
+
+    Tries the named place, then parks, landmarks, compass directions.
+    """
+    want_m = leg_m / DETOUR
     if toward:
         place = _named_place(origin, toward)
         if place:
-            route = _long_enough(origin, place, half_m, limit_detour=False)
+            route = _long_enough(origin, place, leg_m, limit_detour=False)
             if not route:
                 raise ToolError(
                     f"Can't make a sensible out-and-back of that length toward {place['name']} "
@@ -152,38 +164,38 @@ def _route(origin: dict, half_m: float, toward: str | None) -> tuple[str, str, l
             return route
     for places in (_parks, _landmarks):
         for place in places(origin, want_m)[:5]:
-            route = _long_enough(origin, place, half_m)
+            route = _long_enough(origin, place, leg_m)
             if route:
                 return route
     for i, heading in enumerate(COMPASS):  # nowhere to aim for: just pick a direction
-        out = _out_leg(origin, _walk(origin, _ahead(origin, i * 45, want_m * 1.2)), half_m)
+        out = _out_leg(origin, _walk(origin, _ahead(origin, i * 45, want_m * 1.2)), leg_m)
         if out:
             return heading, "heading", *out
     return None
 
 
-def _long_enough(origin: dict, place: dict, half_m: float, limit_detour: bool = True) -> tuple[str, str, list, float] | None:
-    """Out leg toward `place`; if it's too close, keep going past it (bending up to 60° around water)."""
+def _long_enough(origin: dict, place: dict, leg_m: float, limit_detour: bool = True) -> tuple[str, str, list, float] | None:
+    """Leg toward `place`; if it's too close, keep going past it (bending up to 60° around water)."""
     walk = _walk(origin, place, limit_detour=limit_detour)
-    out = _out_leg(origin, walk, half_m)
+    out = _out_leg(origin, walk, leg_m)
     if out:
-        return place["name"], "toward" if walk[1] > half_m else "to", *out
-    if not walk or walk[1] >= half_m:
+        return place["name"], "toward" if walk[1] > leg_m else "to", *out
+    if not walk or walk[1] >= leg_m:
         return None  # unreachable, or long enough but not sensible
     bearing = _bearing(origin, place)
     for turn in (0, 30, -30, 60, -60):
-        end = _ahead(origin, bearing + turn, half_m / DETOUR * 1.2)  # overshoot; cut at halfway
-        out = _out_leg(origin, _walk(origin, end, via=place, limit_detour=limit_detour), half_m)
+        end = _ahead(origin, bearing + turn, leg_m / DETOUR * 1.2)  # overshoot; cut at leg_m
+        out = _out_leg(origin, _walk(origin, end, via=place, limit_detour=limit_detour), leg_m)
         if out:
             return place["name"], "past", *out
     return None
 
 
-def _out_leg(origin: dict, walk: tuple[list, float] | None, half_m: float) -> tuple[list, float] | None:
-    """First half of the run along `walk`: within 5% of halfway, turnaround at the far end (no doubling back)."""
-    if not walk or walk[1] < half_m * (1 - TOLERANCE):
+def _out_leg(origin: dict, walk: tuple[list, float] | None, leg_m: float) -> tuple[list, float] | None:
+    """The first `leg_m` of `walk`: within 5%, ending at its far end (no doubling back)."""
+    if not walk or walk[1] < leg_m * (1 - TOLERANCE):
         return None
-    out_m = min(walk[1], half_m)
+    out_m = min(walk[1], leg_m)
     path = _cut(walk[0], out_m)
     away = [haversine_m(origin["lat"], origin["lon"], lat, lon) for lat, lon in path]
     if away[-1] < 0.7 * max(away):
@@ -373,10 +385,9 @@ SCHEMA = {
     "function": {
         "name": "find_running_routes",
         "description": (
-            "Suggest a running route of the requested distance on real walking paths. By default an "
-            "out-and-back toward a nearby park (or landmark), turning around at halfway. With `finish`, "
-            "a route that ends at that place (or goes there and back). Call it when the runner asks "
-            "where to run or wants a route for today's workout."
+            "Suggest a running route of the requested distance on real walking paths: out-and-back "
+            "(turning at halfway) or one way, toward a nearby park or landmark, or to the runner's "
+            "`finish`. Call it when the runner asks where to run or wants a route for today's workout."
         ),
         "parameters": {
             "type": "object",
@@ -386,7 +397,7 @@ SCHEMA = {
                     "neighborhood with city, or cross streets like 'Amsterdam Ave & W 119th St, New York'. Never guess "
                     "or fill this in yourself; if the runner hasn't said, ask them first."
                 )},
-                "distance": {"type": "number", "description": "Total run distance in `unit`, there and back."},
+                "distance": {"type": "number", "description": "Total run distance in `unit`."},
                 "unit": {"type": "string", "enum": ["mi", "km"], "description": "Default 'mi'."},
                 "toward": {"type": "string", "description": (
                     "Only if the runner names where they want to run (e.g. 'Central Park', 'the "
@@ -397,8 +408,10 @@ SCHEMA = {
                     "place, e.g. 'Columbus Circle, New York'. The walking distance must match `distance` "
                     "within 5%, or the tool says it's not plausible."
                 )},
-                "there_and_back": {"type": "boolean", "description": (
-                    "With `finish`: true = run to the finish and back to the start; false (default) = end at the finish."
+                "trip": {"type": "string", "enum": ["one_way", "out_and_back"], "description": (
+                    "'one_way' if the runner wants to end somewhere else (says one way, point to point, or "
+                    "not coming back); 'out_and_back' to return to the start. Default: one_way with `finish`, "
+                    "out_and_back without."
                 )},
             },
             "required": ["start", "distance"],

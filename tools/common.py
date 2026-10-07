@@ -15,6 +15,7 @@ KM_PER_MI = 1.609344
 M_PER_UNIT = {"mi": 1609.344, "km": 1000.0}
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
 OPEN_METEO_GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 PHOTON_SEARCH_URL = "https://photon.komoot.io/api/"
 
@@ -67,6 +68,17 @@ def geocode(place: str, near: dict | None = None) -> dict:
         raise not_found
     hit = hits["results"][0]
     return {"name": hit["name"], "lat": hit["latitude"], "lon": hit["longitude"], "rank": None, "type": "city", "kind": "place"}
+
+
+def street_at(lat: float, lon: float) -> str | None:
+    """The street and neighborhood at a point, e.g. "South Street, Whitehall"."""
+    try:
+        address = HTTP.get(NOMINATIM_REVERSE_URL, params={"lat": lat, "lon": lon, "format": "json", "zoom": 17},
+                           timeout=10).json()["address"]
+    except (requests.RequestException, ValueError, KeyError):
+        return None
+    parts = [address.get("road"), address.get("neighbourhood") or address.get("suburb")]
+    return ", ".join(p for p in parts if p) or None
 
 
 def plain(text: str) -> str:
