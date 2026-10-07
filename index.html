@@ -979,7 +979,7 @@
                             { class: "track" },
                             cover,
                             el("div", { class: "tt" }, el("b", {}, t.title), el("span", {}, t.artist)),
-                            el("div", { class: "tbpm" }, el("b", {}, t.match.startsWith("2") ? `${t.bpm}×2 BPM` : `${t.bpm} BPM`), el("div", {}, t.length), t.spotify ? el("a", { href: t.spotify, target: "_blank", rel: "noopener" }, "spotify") : null),
+                            el("div", { class: "tbpm" }, el("div", {}, t.length), t.spotify ? el("a", { href: t.spotify, target: "_blank", rel: "noopener" }, "spotify") : null),
                             play,
                         ),
                     );
