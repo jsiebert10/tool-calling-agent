@@ -769,7 +769,7 @@
                     else if (call.name === "plan_running_week") renderWeek(body, data);
                     else if (call.name === "get_todays_run") renderToday(body, data);
                     else if (call.name === "find_running_routes") renderRoutes(body, data);
-                    else if (call.name === "build_run_playlist") renderPlaylist(body, data);
+                    else if (call.name === "build_run_playlist") (data.genre_options ? renderGenreOptions : renderPlaylist)(body, data);
                     else body.remove();
                 } catch (e) {
                     body.textContent = "Couldn't draw this card: " + e.message;
@@ -942,6 +942,22 @@
                 };
             }
 
+            // Genres that fit the cadence; clicking one asks for that playlist.
+            function renderGenreOptions(body, data) {
+                body.appendChild(el("div", { class: "pl-meta" }, `Genres that fit ${data.target_bpm} steps/min (cadence ${data.cadence_source}). Pick one:`));
+                const list = el("div", { class: "chips" });
+                for (const o of data.genre_options)
+                    list.appendChild(
+                        el(
+                            "button",
+                            { class: "chip", onclick: () => send(o.genre) },
+                            el("span", { class: "step" }, o.beat),
+                            `${o.genre} (${o.examples.join(", ")})`,
+                        ),
+                    );
+                body.appendChild(list);
+            }
+
             function renderPlaylist(body, data) {
                 const metro = el("button", { class: "metro", style: `--bpm:${data.target_bpm}` }, "▶ Metronome");
                 metro.addEventListener("click", () => toggleMetronome(metro, data.target_bpm));
@@ -950,7 +966,7 @@
                         "div",
                         { class: "pl-head" },
                         el("div", { class: "bpm" }, String(data.target_bpm), el("small", {}, "BPM = STEPS/MIN")),
-                        el("div", { class: "pl-meta" }, `${data.playlist_length} of music for a ${Math.round(data.run_minutes)} min run · cadence ${data.cadence_source} · ${data.genres_searched.join(", ")}`),
+                        el("div", { class: "pl-meta" }, `${data.playlist_length} of music for a ${Math.round(data.run_minutes)} min run · cadence ${data.cadence_source} · ${data.genre}`),
                         metro,
                     ),
                 );
@@ -962,7 +978,7 @@
                             "div",
                             { class: "track" },
                             cover,
-                            el("div", { class: "tt" }, el("b", {}, t.title), el("span", {}, `${t.artist} · ${t.genre}`)),
+                            el("div", { class: "tt" }, el("b", {}, t.title), el("span", {}, t.artist)),
                             el("div", { class: "tbpm" }, el("b", {}, t.match.startsWith("2") ? `${t.bpm}×2 BPM` : `${t.bpm} BPM`), el("div", {}, t.length), t.spotify ? el("a", { href: t.spotify, target: "_blank", rel: "noopener" }, "spotify") : null),
                             play,
                         ),
