@@ -21,9 +21,13 @@ Today is {today}. The runner's local time is {now}.
 
 You can:
 - plan_running_week: fit their runs around class/work and the forecast. You need their
-  location, the runs they want (type + distance), and their busy times. Ask for whatever
-  is missing in ONE short question, then call it. Expand "Mon-Fri 9-5" into one busy
-  block per day.
+  location, the runs they want (type + distance), and their busy times. Before your
+  FIRST call to this tool in a session, ALWAYS ask ONE combined question that covers
+  whatever is missing PLUS whether they have a preferred time of day to run (morning,
+  midday, or evening) — ask this even if nothing else is missing. Skip it only if they
+  already stated a time-of-day preference unprompted. Once they reply (even "no
+  preference"), call the tool and don't ask about time of day again. Expand "Mon-Fri
+  9-5" into one busy block per day.
 - get_todays_run: when they say things like "I want to do my run today", look up the
   saved plan. Then, unless they only asked what the workout is, call find_running_routes
   from the plan's start_location with the workout's distance.
@@ -55,12 +59,16 @@ def run_agent(messages: list[dict], state: dict) -> tuple[str, list[dict]]:
     tool_calls = []
 
     for _ in range(MAX_TOOL_ROUNDS):
-        reply = litellm.completion(
-            model=MODEL,
-            vertex_location="global",
-            messages=messages,
-            tools=TOOLS,
-        ).choices[0].message
+        reply = (
+            litellm.completion(
+                model=MODEL,
+                vertex_location="global",
+                messages=messages,
+                tools=TOOLS,
+            )
+            .choices[0]
+            .message
+        )
 
         # Append assistant's reply (text, tool calls, or both) to the context.
         # model_dump() keeps it a plain dict: the raw object carries provider-specific
@@ -76,7 +84,14 @@ def run_agent(messages: list[dict], state: dict) -> tuple[str, list[dict]]:
                 args = json.loads(call.function.arguments or "{}")
                 result = run_tool(call.function.name, args, state)
             except json.JSONDecodeError as e:
-                args, result = {}, json.dumps({"error": f"Arguments were not valid JSON ({e}). Call the tool again."})
+                args, result = (
+                    {},
+                    json.dumps(
+                        {
+                            "error": f"Arguments were not valid JSON ({e}). Call the tool again."
+                        }
+                    ),
+                )
             tool_calls += [{"name": call.function.name, "args": args, "result": result}]
 
             messages += [{"role": "tool", "tool_call_id": call.id, "content": result}]
@@ -99,7 +114,9 @@ app = FastAPI()
 class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
-    timezone: str | None = None  # the browser sends its IANA zone so "today" is the runner's today
+    timezone: str | None = (
+        None  # the browser sends its IANA zone so "today" is the runner's today
+    )
 
 
 class ChatResponse(BaseModel):
@@ -118,19 +135,28 @@ def chat(request: ChatRequest):
     # Get or create the session
     session_id = request.session_id or str(uuid.uuid4())
     if session_id not in sessions:
-        sessions[session_id] = [{"role": "system", "content": _system_prompt(request.timezone)}]
+        sessions[session_id] = [
+            {"role": "system", "content": _system_prompt(request.timezone)}
+        ]
         session_state[session_id] = {}
 
     # Append user's message to the context
     sessions[session_id] += [{"role": "user", "content": request.message}]
 
     try:
-        response, tool_calls = run_agent(sessions[session_id], session_state[session_id])
+        response, tool_calls = run_agent(
+            sessions[session_id], session_state[session_id]
+        )
     except Exception as e:
         # Auth, billing, a model that is not running: show it in the chat, not as a 500.
-        response, tool_calls = f"Model call failed: {type(e).__name__}: {str(e)[:300]}", []
+        response, tool_calls = (
+            f"Model call failed: {type(e).__name__}: {str(e)[:300]}",
+            [],
+        )
 
-    return ChatResponse(response=response or "", session_id=session_id, tool_calls=tool_calls)
+    return ChatResponse(
+        response=response or "", session_id=session_id, tool_calls=tool_calls
+    )
 
 
 @app.post("/clear")
@@ -145,10 +171,15 @@ def preview(isrc: str):
     """30-second preview + cover art from Deezer for a playlist track (UI only).
     Deezer's API has no CORS headers, so the page asks us instead."""
     try:
-        track = requests.get(f"https://api.deezer.com/track/isrc:{isrc}", timeout=8).json()
+        track = requests.get(
+            f"https://api.deezer.com/track/isrc:{isrc}", timeout=8
+        ).json()
     except (requests.RequestException, ValueError):
         return {"preview": None, "cover": None}
-    return {"preview": track.get("preview") or None, "cover": (track.get("album") or {}).get("cover_small")}
+    return {
+        "preview": track.get("preview") or None,
+        "cover": (track.get("album") or {}).get("cover_small"),
+    }
 
 
 def _system_prompt(tz_name: str | None) -> str:
@@ -157,7 +188,9 @@ def _system_prompt(tz_name: str | None) -> str:
     except Exception:
         tz = ZoneInfo("America/New_York")
     now = datetime.now(tz)
-    return SYSTEM_PROMPT.format(today=now.strftime("%A, %B %-d, %Y"), now=now.strftime("%H:%M"))
+    return SYSTEM_PROMPT.format(
+        today=now.strftime("%A, %B %-d, %Y"), now=now.strftime("%H:%M")
+    )
 
 
 if __name__ == "__main__":

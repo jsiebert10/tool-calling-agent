@@ -373,23 +373,6 @@
             .day.rest {
                 opacity: 0.55;
             }
-            .rating {
-                display: inline-block;
-                font-family: var(--mono);
-                font-size: 0.62rem;
-                padding: 1px 6px;
-                border-radius: 999px;
-                background: var(--line);
-                width: fit-content;
-            }
-            .rating.great {
-                background: rgba(198, 255, 61, 0.18);
-                color: var(--accent);
-            }
-            .rating.poor {
-                background: rgba(255, 92, 122, 0.18);
-                color: var(--danger);
-            }
             .unsched {
                 margin-top: 10px;
                 color: var(--warn);
@@ -808,7 +791,6 @@
                                 ? [
                                       el("div", { class: "rtype", style: `color:${TYPE_COLOR(r.type)}` }, `${r.type} · ${r.distance}${data.unit}`),
                                       el("div", { class: "time" }, `${r.start}–${r.end}`),
-                                      el("span", { class: "rating " + r.rating }, r.rating),
                                       el("div", { class: "wx" }, r.weather),
                                       r.warnings.map((w) => el("div", { class: "warn" }, "⚠ " + w)),
                                   ]
